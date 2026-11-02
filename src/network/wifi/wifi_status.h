@@ -20,9 +20,9 @@ bool wifi_get_connected(void);
 
 /* Maps RSSI (dBm) to 0 (weakest) - 3 (strongest) signal level. */
 static inline int wifi_signal_level_from_rssi(int rssi_dbm) {
-    if (rssi_dbm >= -50) return 3;
-    if (rssi_dbm >= -60) return 2;
-    if (rssi_dbm >= -70) return 1;
+    if (rssi_dbm >= -55) return 3;
+    if (rssi_dbm >= -67) return 2;
+    if (rssi_dbm >= -78) return 1;
     return 0;
 }
 
