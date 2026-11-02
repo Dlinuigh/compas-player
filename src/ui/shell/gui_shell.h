@@ -123,10 +123,12 @@ void gui_shell_player_swipe_recover(void * ctx);
 /* True from press-down until release whenever that press was eligible for
  * the live-tracking back-swipe (regardless of whether its own deadzone ever
  * confirmed a direction) -- screen_gesture_event_cb() must stand down its
- * own LV_DIR_RIGHT handling for the whole press when this is true, since
+ * own edge-swipe handling for the whole press when this is true, since
  * LVGL's native gesture recognition can win the race against this poll-
  * based deadzone check for the exact same direction on a fast swipe. */
 bool gui_shell_back_swipe_owns_press(void);
+/* True when this press began in the right-edge band that arms swipe-back. */
+bool gui_shell_back_edge_press(void);
 void gui_shell_install_indev_hooks(lv_indev_t * indev);
 /* Not just lv_indev_get_next(NULL) -- the host simulator also registers a
  * keyboard indev, so which one enumerates first isn't guaranteed. Shared by

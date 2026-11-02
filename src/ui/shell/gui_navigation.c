@@ -1593,9 +1593,10 @@ void enable_gesture_bubble_recursive(lv_obj_t * obj) {
  * shared with gui_shell.c. */
 #define QUICK_DRAWER_TRIGGER_ZONE BOARD_SCALE_PX(140) /* swipe-down must start within this many px of the top edge to open it */
 
-/* Global swipe handling for back/forward nav. Swipe left-to-right (finger
- * drags rightward) = go back. Swipe right-to-left = jump to the player
- * screen. Registered per-screen in finalize_screen_navigation().
+/* Global swipe handling for back/forward nav. Back is a leftward swipe
+ * that starts in the right-edge band. A leftward swipe from anywhere else
+ * jumps to the player screen. Registered per-screen in
+ * finalize_screen_navigation().
  *
  * Quick-access drawer drag is handled via poll_quick_drawer_drag() rather
  * than gesture events due to high density of interactive widgets on the
@@ -1627,10 +1628,10 @@ static void screen_gesture_event_cb(lv_event_t * e) {
      * prevents double-handling: LVGL's own gesture recognition can dispatch
      * LV_EVENT_GESTURE for this same press before that poll-based deadzone
      * has had a tick to confirm, on a fast enough swipe. */
-    if (dir == LV_DIR_RIGHT && gui_shell_back_swipe_owns_press()) return;
-    if (dir == LV_DIR_RIGHT) {
+    if (dir == LV_DIR_LEFT && gui_shell_back_swipe_owns_press()) return;
+    if (dir == LV_DIR_LEFT && gui_shell_back_edge_press()) {
         lv_obj_t * active_screen = lv_screen_active();
-        DB_LOG("GESTURE", "screen_gesture_event_cb RIGHT fired screen=%s",
+        DB_LOG("GESTURE", "screen_gesture_event_cb edge-back fired screen=%s",
                active_screen == gui_library_get_files_screen() ? "files" : "other");
         if (!search_close_if_active_for_screen(active_screen) &&
             !file_browser_go_up_for_screen(active_screen)) {

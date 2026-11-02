@@ -1445,6 +1445,13 @@ static lv_obj_t * text_entry_make_container(lv_obj_t * parent) {
     return obj;
 }
 
+static void text_entry_block_gesture_bubble(lv_obj_t * obj) {
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    uint32_t count = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < count; i++)
+        text_entry_block_gesture_bubble(lv_obj_get_child(obj, i));
+}
+
 static void text_entry_build_pinyin_bar(lv_obj_t * group) {
     lv_obj_t * bar = lv_obj_create(group);
     text_entry_pinyin_bar = bar;
@@ -1464,6 +1471,7 @@ static void text_entry_build_pinyin_bar(lv_obj_t * group) {
     lv_obj_set_style_pad_bottom(bar, 0, 0);
     lv_obj_set_style_pad_column(bar, BOARD_SCALE_PX(4), 0);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+    register_swipe_dead_zone(bar);
 
     text_entry_pinyin_spell = lv_label_create(bar);
     lv_obj_add_style(text_entry_pinyin_spell, &style_theme_text_muted, 0);
@@ -1588,6 +1596,9 @@ static lv_obj_t * build_t9_keypad_group(lv_obj_t * parent) {
     lv_obj_add_flag(group, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(group, text_entry_variant_cancel_event_cb, LV_EVENT_GESTURE, NULL);
     enable_gesture_bubble_recursive(group);
+    /* Candidate scrolling is horizontal. It must not bubble into the
+     * screen-wide back gesture, including the right-edge band the bar reaches. */
+    if (text_entry_pinyin_bar) text_entry_block_gesture_bubble(text_entry_pinyin_bar);
 
     return group;
 }
@@ -1804,6 +1815,7 @@ void gui_text_input_teardown(void) {
      * below rather than under one shared early-return, so it's still
      * cleaned up even if the two ever get out of sync. */
     if (text_entry_multitap_timer) { lv_timer_del(text_entry_multitap_timer); text_entry_multitap_timer = NULL; }
+    if (text_entry_pinyin_bar) unregister_swipe_dead_zone(text_entry_pinyin_bar);
     if (text_entry_screen) { lv_obj_delete(text_entry_screen); text_entry_screen = NULL; }
     text_entry_t9_pad = NULL;
     text_entry_qwerty_kb = NULL;

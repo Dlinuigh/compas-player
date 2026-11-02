@@ -678,7 +678,7 @@ static void close_lyrics_screen(void) {
 }
 
 /* The auto-close-on-track-change-with-no-lyrics path (lyrics_timer_cb())
- * still calls close_lyrics_screen() directly. A user's own right-swipe now
+ * still calls close_lyrics_screen() directly. A user's own edge swipe now
  * goes through gui_shell.c's live back-swipe instead (reveal-style, exiting
  * to Player) once that candidate claims the press -- see gui_shell_back_
  * swipe_owns_press()'s own comment for why standing down here, not just
@@ -688,8 +688,8 @@ static void lyrics_gesture_event_cb(lv_event_t * e) {
     if (lyrics_embedded) return;
     if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
     lv_indev_t * indev = lv_indev_active();
-    if (!indev || lv_indev_get_gesture_dir(indev) != LV_DIR_RIGHT) return;
-    if (gui_shell_back_swipe_owns_press()) return;
+    if (!indev || lv_indev_get_gesture_dir(indev) != LV_DIR_LEFT) return;
+    if (gui_shell_back_swipe_owns_press() || !gui_shell_back_edge_press()) return;
 
     lv_indev_wait_release(indev); /* same reasoning as screen_gesture_event_cb's own comment -- avoid a phantom tap landing on the player screen under the still-down finger */
     close_lyrics_screen();
