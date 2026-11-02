@@ -41,21 +41,4 @@ bool dlna_control_consume_stop_requested(void);
  * update_timer_cb. */
 void dlna_control_notify_status(bool playing, bool paused);
 
-/* Transport commands relayed from the controller after a cast is playing.
- * Poll from the LVGL/main thread only. */
-typedef enum {
-    DLNA_TRANSPORT_NONE = 0,
-    DLNA_TRANSPORT_PAUSE,
-    DLNA_TRANSPORT_RESUME,
-} dlna_transport_request_t;
-dlna_transport_request_t dlna_control_consume_transport_request(void);
-/* Returns true once with the requested absolute position in seconds. */
-bool dlna_control_consume_seek_request(int * out_seconds);
-
-/* dmrd only learns playback progress from its companion: "play" moves its
- * transport out of TRANSITIONING, "set_duration@s" / "set_position@s@s"
- * feed GetPositionInfo, "play_finish" and "stop" end the transport. No-op
- * while the renderer is off. */
-void dlna_control_send_event(const char * message);
-
 #endif /* DLNA_CONTROL_H */
