@@ -22,6 +22,23 @@ bool airplay_control_is_active(void) {
     return control_active;
 }
 
+/* The stock shairport's tinysvcmdns publishes gethostname() verbatim as the
+ * SRV target and A record name; macOS only resolves ".local" names over
+ * mDNS, so a bare "compas" leaves the Mac spinning until it times out. */
+static void ensure_mdns_hostname(void) {
+#ifndef HOST_BUILD
+    char name[64 + 7];
+    if (gethostname(name, 64) != 0) return;
+    name[63] = '\0';
+    size_t len = strlen(name);
+    if (len == 0) return;
+    if (len >= 6 && strcmp(name + len - 6, ".local") == 0) return;
+    if (name[len - 1] == '.') name[--len] = '\0';
+    memcpy(name + len, ".local", 7);
+    sethostname(name, strlen(name));
+#endif
+}
+
 bool airplay_control_start(const char * device_name) {
     snprintf(last_device_name, sizeof(last_device_name), "%s", device_name);
 
@@ -51,6 +68,7 @@ bool airplay_control_start(const char * device_name) {
                        (char *) "-l", (char *) "/tmp/shairport.log",
                        (char *) "-o", (char *) "pipe",
                        (char *) "--", (char *) AIRPLAY_FIFO_PATH, NULL };
+    ensure_mdns_hostname();
     if (!subprocess_spawn_daemon(argv)) {
         fprintf(stderr, "airplay_control: failed to spawn shairport -- AirPlay will not be discoverable this session\n");
         /* Roll back started threads and FIFO if shairport spawn fails. */
