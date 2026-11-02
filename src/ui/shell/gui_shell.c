@@ -4104,10 +4104,11 @@ static int32_t player_swipe_last_v = 0; /* last sampled x (not necessarily prese
 static int32_t player_swipe_last_velocity = 0;
 static slide_transition_ctx_t * player_swipe_ctx = NULL;
 
-/* Back is a leftward swipe that starts in the right-edge band, not a
- * horizontal drag anywhere on the screen. Same live per-tick overlay as
- * player_swipe_* above. Provisional until NAV_SWIPE_DEADZONE_PX so a
- * vertical scroll can still claim the press.
+/* Back is an inward swipe from either vertical edge: rightward from the
+ * left edge, or leftward from the right edge. Not a drag that starts in
+ * the middle of the screen. Same live per-tick overlay as player_swipe_*
+ * above. Provisional until NAV_SWIPE_DEADZONE_PX so a vertical scroll can
+ * still claim the press.
  * screen_gesture_event_cb()'s LV_DIR_RIGHT -> nav_pop() path stays as
  * the fallback for presses this candidate rejects (excluded screens,
  * dead zones, depth == 1). Unlike player-swipe's own left-swipe (which has
@@ -4129,6 +4130,7 @@ static bool back_swipe_owns_press = false;
 static bool back_swipe_tracking = false;
 /* Same one-tick present deferral as home_swipe_just_confirmed above. */
 static bool back_swipe_just_confirmed = false;
+static bool back_swipe_from_left = false;
 static int32_t back_swipe_touch_start_x = 0;
 static int32_t back_swipe_touch_start_y = 0;
 static int32_t back_swipe_last_v = 0;
@@ -4414,14 +4416,24 @@ static int32_t back_swipe_edge_px(void) {
     return edge;
 }
 
-static bool press_in_back_edge(int32_t x) {
+static int32_t back_swipe_screen_w(void) {
     int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
     if (w <= 0) w = BOARD_SCREEN_WIDTH;
-    return x >= w - back_swipe_edge_px();
+    return w;
 }
 
-bool gui_shell_back_edge_press(void) {
-    return press_in_back_edge(gesture_press_origin_x);
+static bool press_in_left_edge(int32_t x) {
+    return x >= 0 && x < back_swipe_edge_px();
+}
+
+static bool press_in_right_edge(int32_t x) {
+    return x >= back_swipe_screen_w() - back_swipe_edge_px();
+}
+
+bool gui_shell_back_gesture_matches(int dir) {
+    if (press_in_left_edge(gesture_press_origin_x) && dir == LV_DIR_RIGHT) return true;
+    if (press_in_right_edge(gesture_press_origin_x) && dir == LV_DIR_LEFT) return true;
+    return false;
 }
 
 static bool player_swipe_press_excluded(lv_point_t p) {
@@ -4691,7 +4703,8 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
                                   lv_screen_active() != gui_network_get_bt_dac_overlay() &&
                                   !gui_library_navigation_blocked() &&
                                   !player_swipe_press_excluded(p) &&
-                                  !press_in_back_edge(p.x);
+                                  !press_in_left_edge(p.x) &&
+                                  !press_in_right_edge(p.x);
         player_swipe_touch_start_x = p.x;
         player_swipe_touch_start_y = p.y;
         player_swipe_tracking = false;
@@ -4719,7 +4732,8 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
                                 lv_screen_active() != gui_busy_get_screen() &&
                                 !gui_library_navigation_blocked() &&
                                 !player_swipe_press_excluded(p) &&
-                                press_in_back_edge(p.x);
+                                (press_in_left_edge(p.x) || press_in_right_edge(p.x));
+        back_swipe_from_left = press_in_left_edge(p.x);
         back_swipe_touch_start_x = p.x;
         back_swipe_touch_start_y = p.y;
         back_swipe_tracking = false;
@@ -4823,7 +4837,8 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
         int32_t adx = dx < 0 ? -dx : dx;
         int32_t ady = dy < 0 ? -dy : dy;
         if (adx >= NAV_SWIPE_DEADZONE_PX || ady >= NAV_SWIPE_DEADZONE_PX) {
-            if (dx < 0 && adx > ady) {
+            bool inward = back_swipe_from_left ? dx > 0 : dx < 0;
+            if (inward && adx > ady) {
                 lv_obj_t * active = lv_screen_active();
                 /* Search-open and Files-not-at-root consume this edge swipe
                  * as in-screen back (close the bar / step up a directory)
@@ -4847,10 +4862,13 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
                          * entry for the same reveal field, still an active
                          * A/B test rather than settled for every gesture. */
                         bool reveal = active != gui_player_get_screen();
-                        /* Finger moves left. Reveal slides the current screen
-                         * off that way; the Player's two-panel slide brings
-                         * the previous screen in from the right. */
-                        back_swipe_ctx = begin_slide_transition_ex(back_swipe_target_scr, !reveal, false, reveal);
+                        /* Left edge: finger moves right, previous screen is
+                         * on the left (forward=false). Right edge: finger
+                         * moves left; reveal follows it, and the Player's
+                         * two-panel slide brings the previous screen in
+                         * from the right. */
+                        bool forward = !back_swipe_from_left && !reveal;
+                        back_swipe_ctx = begin_slide_transition_ex(back_swipe_target_scr, forward, false, reveal);
                         DB_LOG("GESTURE", "back_swipe slide target=%p ctx=%p",
                                (void *) back_swipe_target_scr, (void *) back_swipe_ctx);
                         if (back_swipe_ctx) {
@@ -4927,8 +4945,13 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
     if (pressed && back_swipe_tracking) {
         int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
         int32_t v = p.x - back_swipe_touch_start_x;
-        if (v > 0) v = 0;  /* never past fully-closed (finger drifting back right of the start point just holds at 0) */
-        if (v < -w) v = -w;  /* never past fully-off */
+        if (back_swipe_from_left) {
+            if (v < 0) v = 0;
+            if (v > w) v = w;
+        } else {
+            if (v > 0) v = 0;
+            if (v < -w) v = -w;
+        }
         /* Sticky velocity -- see home_swipe's own comment on this same
          * pattern just above. */
         int32_t back_swipe_delta = v - back_swipe_last_v;
@@ -5148,12 +5171,16 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
         int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
         int32_t current_v = back_swipe_last_v;
         bool commit;
-        if (back_swipe_last_velocity < 0) {
-            commit = true; /* still moving left (toward Back) at release, however slowly */
+        if (back_swipe_from_left) {
+            if (back_swipe_last_velocity > 0) commit = true;
+            else if (back_swipe_last_velocity < 0) commit = false;
+            else commit = current_v > w / 2;
+        } else if (back_swipe_last_velocity < 0) {
+            commit = true;
         } else if (back_swipe_last_velocity > 0) {
-            commit = false; /* still moving back right (toward cancel) at release, however slowly */
+            commit = false;
         } else {
-            commit = current_v < -w / 2; /* perfectly still at release -- fall back to position */
+            commit = current_v < -w / 2;
         }
         back_swipe_ctx->commit = commit;
         if (commit) {
@@ -5171,7 +5198,7 @@ static void poll_quick_drawer_drag(lv_timer_t * timer) {
         lv_anim_init(&a);
         lv_anim_set_var(&a, back_swipe_ctx);
         lv_anim_set_user_data(&a, back_swipe_ctx);
-        lv_anim_set_values(&a, current_v, commit ? -w : 0);
+        lv_anim_set_values(&a, current_v, commit ? (back_swipe_from_left ? w : -w) : 0);
         lv_anim_set_duration(&a, gui_anim_ms(QUICK_DRAWER_ANIM_MS));
         lv_anim_set_exec_cb(&a, slide_transition_anim_x_cb);
         lv_anim_set_completed_cb(&a, slide_transition_done_cb);

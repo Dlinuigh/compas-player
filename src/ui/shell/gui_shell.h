@@ -127,8 +127,9 @@ void gui_shell_player_swipe_recover(void * ctx);
  * LVGL's native gesture recognition can win the race against this poll-
  * based deadzone check for the exact same direction on a fast swipe. */
 bool gui_shell_back_swipe_owns_press(void);
-/* True when this press began in the right-edge band that arms swipe-back. */
-bool gui_shell_back_edge_press(void);
+/* True when this press began on an edge and `dir` is the inward swipe
+ * (left edge + rightward, or right edge + leftward). `dir` is lv_dir_t. */
+bool gui_shell_back_gesture_matches(int dir);
 void gui_shell_install_indev_hooks(lv_indev_t * indev);
 /* Not just lv_indev_get_next(NULL) -- the host simulator also registers a
  * keyboard indev, so which one enumerates first isn't guaranteed. Shared by

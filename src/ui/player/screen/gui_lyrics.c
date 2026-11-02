@@ -688,8 +688,8 @@ static void lyrics_gesture_event_cb(lv_event_t * e) {
     if (lyrics_embedded) return;
     if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
     lv_indev_t * indev = lv_indev_active();
-    if (!indev || lv_indev_get_gesture_dir(indev) != LV_DIR_LEFT) return;
-    if (gui_shell_back_swipe_owns_press() || !gui_shell_back_edge_press()) return;
+    if (!indev || !gui_shell_back_gesture_matches((int) lv_indev_get_gesture_dir(indev))) return;
+    if (gui_shell_back_swipe_owns_press()) return;
 
     lv_indev_wait_release(indev); /* same reasoning as screen_gesture_event_cb's own comment -- avoid a phantom tap landing on the player screen under the still-down finger */
     close_lyrics_screen();
