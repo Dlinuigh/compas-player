@@ -32,6 +32,7 @@
 #include "../../network/airplay/airplay_control.h"
 #include "../../network/services/dlna_control.h"
 #include "../../network/remote/control/remote_control.h"
+#include "../../network/http/client/http_conn.h"
 #include "../../hardware/power/battery.h"
 #include "../../network/firmware/firmware_ota.h"
 #include "../../network/store/plugins/plugin_store.h"
@@ -1758,6 +1759,7 @@ void gui_init(uint32_t screen_width, uint32_t screen_height) {
     boot_checkpoint("settings_load done; settings application begin");
 #endif
     i18n_set_language(current_settings.language);
+    http_conn_set_proxy(current_settings.http_proxy);
     gui_display_apply_rotation(current_settings.screen_upside_down);
     bt_control_restore_codec_preference(current_settings.bt_codec);
     bt_ssc_settings_apply(&current_settings);

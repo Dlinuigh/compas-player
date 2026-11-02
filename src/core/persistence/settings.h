@@ -443,6 +443,11 @@ typedef struct {
      * hostname_apply(). Requires a reboot to take effect. */
     char hostname[64];
 
+    /* Settings -> Wi-Fi -> HTTP Proxy. "host:port" of an HTTP CONNECT proxy
+     * every outgoing http_conn connection tunnels through; empty connects
+     * directly. Applied live via http_conn_set_proxy(). */
+    char http_proxy[128];
+
     /* UI text size (Settings -> Display -> Font Size): 0 = Small, 1 =
      * Medium, 2 = "BlindMF" (largest). Applied at startup and live
      * via fallback_font_apply_size_tier(). Defaults to 1 (Medium). */

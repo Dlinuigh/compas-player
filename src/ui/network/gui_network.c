@@ -23,6 +23,7 @@ extern int subprocess_run(char * const argv[], char ** out_output, int timeout_s
 #include "../../hardware/device/device_config.h"
 #include "../../network/wifi/wifi_status.h"
 #include "../../network/wifi/wifi_control.h"
+#include "../../network/http/client/http_conn.h"
 #include "../../network/bluetooth/control/bluetooth_control.h"
 #include "../../network/bluetooth/reconnect/bluetooth_reconnect.h"
 #include "../../hardware/usb/usb_mode_control.h"
@@ -1326,6 +1327,27 @@ static void wifi_dns_settings_row_cb(lv_event_t * e) {
     open_wifi_dns_screen();
 }
 
+static void wifi_http_proxy_entered_cb(const char * text, void * user_data) {
+    (void) user_data;
+    char host[256];
+    char port[8];
+    if (!http_conn_parse_proxy(text, host, sizeof(host), port, sizeof(port))) {
+        show_error_toast(TR("Invalid proxy address"));
+        return;
+    }
+    if (host[0] == '\0') current_settings.http_proxy[0] = '\0';
+    else snprintf(current_settings.http_proxy, sizeof(current_settings.http_proxy),
+                  strchr(host, ':') ? "[%s]:%s" : "%s:%s", host, port);
+    http_conn_set_proxy(current_settings.http_proxy);
+    settings_save(&current_settings);
+    populate_wifi_screen(wifi_control_is_enabled());
+}
+
+static void wifi_http_proxy_row_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    show_text_entry(TR("HTTP Proxy"), current_settings.http_proxy, false, false, wifi_http_proxy_entered_cb, NULL);
+}
+
 /* ---- Master rebuild for the Wi-Fi screen's one dynamic list: toggle row,
  * then (only while enabled) the info/manual-entry/DNS rows, memorized
  * networks, and available networks -- called after every state change
@@ -1362,6 +1384,10 @@ void populate_wifi_screen(bool enabled) {
     add_pill_chevron_row(wifi_list, TR("Wi-Fi Info"), wifi_info_row_cb);
     add_pill_chevron_row(wifi_list, TR("Manual SSID Entry"), wifi_manual_entry_row_cb);
     add_pill_chevron_row(wifi_list, TR("DNS Settings"), wifi_dns_settings_row_cb);
+    char proxy_text[192];
+    snprintf(proxy_text, sizeof(proxy_text), "%s: %s", TR("HTTP Proxy"),
+             current_settings.http_proxy[0] ? current_settings.http_proxy : TR("Not set"));
+    add_pill_chevron_row(wifi_list, proxy_text, wifi_http_proxy_row_cb);
 
     add_section_header(wifi_list, TR("Memorized Networks"));
     /* During an optimistic cold enable there is no wpa_supplicant control
