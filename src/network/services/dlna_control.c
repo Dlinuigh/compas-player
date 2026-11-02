@@ -20,6 +20,8 @@
 
 /* Unix domain socket where dmrd expects its playback companion to listen. */
 #define DMR_STREAMER_SOCKET_PATH "/data/dmr_streamer"
+/* dmrd's own listener for companion notifications (output_loop()). */
+#define DMR_CONTROL_SOCKET_PATH "/data/dmr_control"
 
 /* Temporary download directory and file path on the SD card. Uses a dot-prefixed
  * directory so recursive library scans ignore it. */
@@ -46,6 +48,8 @@ static char pending_artist[256] = {0};
 static char pending_album[256] = {0};
 
 static atomic_bool stop_requested = false;
+static atomic_int transport_request = DLNA_TRANSPORT_NONE;
+static atomic_int seek_request_seconds = -1;
 
 static uint64_t dlna_download_generation = 0;
 static bool track_ready = false;
@@ -273,13 +277,22 @@ static void handle_connection(int cfd) {
         pthread_mutex_lock(&dlna_mutex);
         copy_display_text(pending_album, sizeof(pending_album), (const char *) buf + 15);
         pthread_mutex_unlock(&dlna_mutex);
-    } else if ((size_t) n >= 5 && memcmp(buf, "play@", 5) == 0) {
-        handle_play();
+    } else if ((size_t) n >= 6 && memcmp(buf, "play@", 5) == 0) {
+        /* play@0 starts the transport's URI; play@1 resumes from PAUSED. */
+        if (buf[5] == '1') atomic_store_explicit(&transport_request, DLNA_TRANSPORT_RESUME, memory_order_release);
+        else handle_play();
+    } else if ((size_t) n >= 5 && memcmp(buf, "pause", 5) == 0) {
+        atomic_store_explicit(&transport_request, DLNA_TRANSPORT_PAUSE, memory_order_release);
+    } else if ((size_t) n > 5 && memcmp(buf, "seek@", 5) == 0) {
+        int seconds = atoi((const char *) buf + 5);
+        if (seconds >= 0) atomic_store_explicit(&seek_request_seconds, seconds, memory_order_release);
     } else if ((size_t) n >= 4 && memcmp(buf, "stop", 4) == 0) {
         pthread_mutex_lock(&dlna_mutex);
         cast_intent_playing = false;
         ++dlna_download_generation;
         pthread_mutex_unlock(&dlna_mutex);
+        atomic_store_explicit(&transport_request, DLNA_TRANSPORT_NONE, memory_order_release);
+        atomic_store_explicit(&seek_request_seconds, -1, memory_order_release);
         atomic_store_explicit(&stop_requested, true, memory_order_release); /* Consumed by LVGL/main thread */
     }
     /* Other commands are ignored without reply. */
@@ -427,6 +440,33 @@ bool dlna_control_consume_ready_track(char * out_path, size_t path_size,
 
 bool dlna_control_consume_stop_requested(void) {
     return atomic_exchange_explicit(&stop_requested, false, memory_order_acq_rel);
+}
+
+dlna_transport_request_t dlna_control_consume_transport_request(void) {
+    return (dlna_transport_request_t) atomic_exchange_explicit(&transport_request, DLNA_TRANSPORT_NONE,
+                                                               memory_order_acq_rel);
+}
+
+bool dlna_control_consume_seek_request(int * out_seconds) {
+    int seconds = atomic_exchange_explicit(&seek_request_seconds, -1, memory_order_acq_rel);
+    if (seconds < 0) return false;
+    if (out_seconds) *out_seconds = seconds;
+    return true;
+}
+
+void dlna_control_send_event(const char * message) {
+    if (!message || !atomic_load_explicit(&running, memory_order_acquire)) return;
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return;
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", DMR_CONTROL_SOCKET_PATH);
+    if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == 0) {
+        ssize_t sent = send(fd, message, strlen(message), 0);
+        (void) sent;
+    }
+    close(fd);
 }
 
 void dlna_control_notify_status(bool playing, bool paused) {

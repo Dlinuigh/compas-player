@@ -1678,6 +1678,56 @@ const char * gui_plugin_get_current_track_path(void) {
 /* DLNA/UPnP-AV cast playback:
  * When a cast track is downloaded and ready, hand it to on_file_selected()
  * for local playback using the file's embedded metadata tags. */
+#define DLNA_CAST_OPEN_TIMEOUT_MS 15000
+#define DLNA_CAST_POSITION_INTERVAL_MS 1000
+static char dlna_cast_path[512];
+static bool dlna_cast_started;
+static uint32_t dlna_cast_tick;
+
+static void dlna_cast_send(const char * fmt, int a, int b) {
+    char msg[64];
+    snprintf(msg, sizeof(msg), fmt, a, b);
+    dlna_control_send_event(msg);
+}
+
+static void dlna_cast_end(const char * event) {
+    if (dlna_cast_started) dlna_control_send_event(event);
+    dlna_cast_path[0] = '\0';
+    dlna_cast_started = false;
+}
+
+/* Mirrors the cast track's real playback into dmrd, which otherwise reports
+ * TRANSITIONING at 00:00:00 forever and rejects the controller's next Play. */
+static void poll_dlna_cast_progress(void) {
+    if (!dlna_cast_path[0]) return;
+    audio_playback_progress_t p;
+    if (!audio_get_playback_progress(dlna_cast_path, &p)) {
+        if (dlna_cast_started || lv_tick_elaps(dlna_cast_tick) > DLNA_CAST_OPEN_TIMEOUT_MS) dlna_cast_end("stop");
+        return;
+    }
+    int position = (int) p.position_seconds;
+    if (p.state == AUDIO_PLAYBACK_PROGRESS_NATURAL_EOF) {
+        dlna_cast_end("play_finish");
+        return;
+    }
+    if (p.state == AUDIO_PLAYBACK_PROGRESS_MANUAL_STOP) {
+        dlna_cast_end("stop");
+        return;
+    }
+    if (!dlna_cast_started) {
+        dlna_cast_started = true;
+        dlna_control_send_event("play");
+        dlna_cast_send("set_duration@%d", (int) p.duration_seconds, 0);
+        dlna_cast_send("set_position@%d@%d", position, position);
+        dlna_cast_tick = lv_tick_get();
+        return;
+    }
+    if (p.is_playing && lv_tick_elaps(dlna_cast_tick) >= DLNA_CAST_POSITION_INTERVAL_MS) {
+        dlna_cast_tick = lv_tick_get();
+        dlna_cast_send("set_position@%d@%d", position, position);
+    }
+}
+
 static void poll_dlna_control(void) {
     char path[512], title[256], artist[256], album[256];
     if (dlna_control_consume_ready_track(path, sizeof(path), title, sizeof(title),
@@ -1686,12 +1736,33 @@ static void poll_dlna_control(void) {
         playlist[0] = strdup(path);
         clear_player_source(); /* cast from another device -- no on-device list to go back to */
         on_file_selected(playlist, 1, 0);
+        snprintf(dlna_cast_path, sizeof(dlna_cast_path), "%s", path);
+        dlna_cast_started = false;
+        dlna_cast_tick = lv_tick_get();
     }
     if (dlna_control_consume_stop_requested()) {
+        dlna_cast_path[0] = '\0';
+        dlna_cast_started = false;
         audio_stop();
         set_play_button_state(false);
         plugin_manager_notify_stopped();
     }
+    if (dlna_cast_started) {
+        dlna_transport_request_t request = dlna_control_consume_transport_request();
+        bool paused = audio_is_paused();
+        if ((request == DLNA_TRANSPORT_PAUSE && !paused && audio_is_playing()) ||
+            (request == DLNA_TRANSPORT_RESUME && paused))
+            gui_plugin_toggle_pause();
+        /* A Seek sent right after Play waits here until the download opens. */
+        int seconds;
+        if (dlna_control_consume_seek_request(&seconds)) {
+            gui_plugin_seek((double) seconds);
+            dlna_cast_send("set_position@%d@%d", seconds, seconds);
+        }
+    } else {
+        (void) dlna_control_consume_transport_request();
+    }
+    poll_dlna_cast_progress();
     dlna_control_notify_status(audio_is_playing(), audio_is_paused());
 }
 
