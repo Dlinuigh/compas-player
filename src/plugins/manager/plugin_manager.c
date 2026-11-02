@@ -5882,7 +5882,7 @@ static char (*scan_plugin_dir_sorted_names(char dir_path_out[600], int * out_cou
             break;
         }
         size_t len = strlen(ent->d_name);
-        if (len < 5 || strcasecmp(ent->d_name + len - 4, ".lua") != 0) continue;
+        if (ent->d_name[0] == '.' || len < 5 || strcasecmp(ent->d_name + len - 4, ".lua") != 0) continue;
         if (gui_themes_is_legacy_theme_loader(NULL, ent->d_name)) continue;
         if (name_count >= (size_t) INT_MAX) {
             errno = EOVERFLOW;
