@@ -318,6 +318,13 @@ bool http_conn_set_proxy(const char * text) {
     return true;
 }
 
+bool http_conn_set_proxy_parts(const char * host, const char * port) {
+    if (!host || !port || !host[0] || !port[0]) return http_conn_set_proxy("");
+    char text[sizeof(proxy_host) + sizeof(proxy_port) + 4];
+    snprintf(text, sizeof(text), strchr(host, ':') ? "[%s]:%s" : "%s:%s", host, port);
+    return http_conn_set_proxy(text);
+}
+
 static bool proxy_snapshot(char * host, size_t host_size, char * port, size_t port_size) {
     pthread_mutex_lock(&proxy_mutex);
     bool enabled = proxy_host[0] != '\0';

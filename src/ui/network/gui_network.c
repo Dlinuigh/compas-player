@@ -1327,25 +1327,70 @@ static void wifi_dns_settings_row_cb(lv_event_t * e) {
     open_wifi_dns_screen();
 }
 
-static void wifi_http_proxy_entered_cb(const char * text, void * user_data) {
-    (void) user_data;
-    char host[256];
-    char port[8];
-    if (!http_conn_parse_proxy(text, host, sizeof(host), port, sizeof(port))) {
-        show_error_toast(TR("Invalid proxy address"));
-        return;
-    }
-    if (host[0] == '\0') current_settings.http_proxy[0] = '\0';
-    else snprintf(current_settings.http_proxy, sizeof(current_settings.http_proxy),
-                  strchr(host, ':') ? "[%s]:%s" : "%s:%s", host, port);
-    http_conn_set_proxy(current_settings.http_proxy);
+static void wifi_http_proxy_apply(void) {
+    http_conn_set_proxy_parts(current_settings.http_proxy_host, current_settings.http_proxy_port);
     settings_save(&current_settings);
     populate_wifi_screen(wifi_control_is_enabled());
 }
 
-static void wifi_http_proxy_row_cb(lv_event_t * e) {
+/* Accepts a bare host, or a pasted "host:port" which also fills the port. */
+static void wifi_http_proxy_host_entered_cb(const char * text, void * user_data) {
+    (void) user_data;
+    char host[sizeof(current_settings.http_proxy_host)];
+    char port[sizeof(current_settings.http_proxy_port)];
+    char probe[sizeof(host) + 16];
+    const char * trimmed = text ? text : "";
+    while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+    if (!trimmed[0]) {
+        current_settings.http_proxy_host[0] = '\0';
+        wifi_http_proxy_apply();
+        return;
+    }
+    bool with_port = http_conn_parse_proxy(trimmed, host, sizeof(host), port, sizeof(port)) && host[0];
+    if (!with_port) {
+        snprintf(probe, sizeof(probe), strchr(trimmed, ':') ? "[%s]:1" : "%s:1", trimmed);
+        if (!http_conn_parse_proxy(probe, host, sizeof(host), port, sizeof(port)) || !host[0]) {
+            show_error_toast(TR("Invalid proxy address"));
+            return;
+        }
+    }
+    snprintf(current_settings.http_proxy_host, sizeof(current_settings.http_proxy_host), "%s", host);
+    if (with_port)
+        snprintf(current_settings.http_proxy_port, sizeof(current_settings.http_proxy_port), "%s", port);
+    wifi_http_proxy_apply();
+}
+
+static void wifi_http_proxy_port_entered_cb(const char * text, void * user_data) {
+    (void) user_data;
+    const char * trimmed = text ? text : "";
+    while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+    if (!trimmed[0]) {
+        current_settings.http_proxy_port[0] = '\0';
+        wifi_http_proxy_apply();
+        return;
+    }
+    char host[8];
+    char port[sizeof(current_settings.http_proxy_port)];
+    char probe[32];
+    snprintf(probe, sizeof(probe), "h:%s", trimmed);
+    if (!http_conn_parse_proxy(probe, host, sizeof(host), port, sizeof(port))) {
+        show_error_toast(TR("Invalid proxy port"));
+        return;
+    }
+    snprintf(current_settings.http_proxy_port, sizeof(current_settings.http_proxy_port), "%s", port);
+    wifi_http_proxy_apply();
+}
+
+static void wifi_http_proxy_host_row_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    show_text_entry(TR("HTTP Proxy"), current_settings.http_proxy, false, false, wifi_http_proxy_entered_cb, NULL);
+    show_text_entry(TR("HTTP Proxy Host"), current_settings.http_proxy_host, false, false,
+                    wifi_http_proxy_host_entered_cb, NULL);
+}
+
+static void wifi_http_proxy_port_row_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    show_text_entry(TR("HTTP Proxy Port"), current_settings.http_proxy_port, false, true,
+                    wifi_http_proxy_port_entered_cb, NULL);
 }
 
 /* ---- Master rebuild for the Wi-Fi screen's one dynamic list: toggle row,
@@ -1385,9 +1430,12 @@ void populate_wifi_screen(bool enabled) {
     add_pill_chevron_row(wifi_list, TR("Manual SSID Entry"), wifi_manual_entry_row_cb);
     add_pill_chevron_row(wifi_list, TR("DNS Settings"), wifi_dns_settings_row_cb);
     char proxy_text[192];
-    snprintf(proxy_text, sizeof(proxy_text), "%s: %s", TR("HTTP Proxy"),
-             current_settings.http_proxy[0] ? current_settings.http_proxy : TR("Not set"));
-    add_pill_chevron_row(wifi_list, proxy_text, wifi_http_proxy_row_cb);
+    snprintf(proxy_text, sizeof(proxy_text), "%s: %s", TR("HTTP Proxy Host"),
+             current_settings.http_proxy_host[0] ? current_settings.http_proxy_host : TR("Not set"));
+    add_pill_chevron_row(wifi_list, proxy_text, wifi_http_proxy_host_row_cb);
+    snprintf(proxy_text, sizeof(proxy_text), "%s: %s", TR("HTTP Proxy Port"),
+             current_settings.http_proxy_port[0] ? current_settings.http_proxy_port : TR("Not set"));
+    add_pill_chevron_row(wifi_list, proxy_text, wifi_http_proxy_port_row_cb);
 
     add_section_header(wifi_list, TR("Memorized Networks"));
     /* During an optimistic cold enable there is no wpa_supplicant control

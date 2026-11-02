@@ -40,6 +40,10 @@ bool http_conn_parse_proxy(const char * text, char * host, size_t host_size, cha
  * current proxy unchanged) when text is malformed. */
 bool http_conn_set_proxy(const char * text);
 
+/* http_conn_set_proxy() from separate fields; either one empty clears the
+ * proxy. Returns false (proxy unchanged) when they don't form a valid one. */
+bool http_conn_set_proxy_parts(const char * host, const char * port);
+
 /* Low-level HTTP(S) connection primitives shared by http_client and http_stream:
  * URL parsing, opening plain TCP or mbedTLS connections, and buffered
  * reading of lines and exact byte sequences. */

@@ -1759,7 +1759,7 @@ void gui_init(uint32_t screen_width, uint32_t screen_height) {
     boot_checkpoint("settings_load done; settings application begin");
 #endif
     i18n_set_language(current_settings.language);
-    http_conn_set_proxy(current_settings.http_proxy);
+    http_conn_set_proxy_parts(current_settings.http_proxy_host, current_settings.http_proxy_port);
     gui_display_apply_rotation(current_settings.screen_upside_down);
     bt_control_restore_codec_preference(current_settings.bt_codec);
     bt_ssc_settings_apply(&current_settings);
