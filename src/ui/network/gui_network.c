@@ -3932,6 +3932,7 @@ bool gui_network_toggle_airplay(void) {
             start_bt_apply_output_settings(false, current_settings.bt_volume_sync_enabled);
         }
     } else {
+        airplay_control_stop();
     }
 
     refresh_airplay_screen_if_built();
@@ -4034,7 +4035,53 @@ static lv_obj_t * build_airplay_overlay_screen(void) {
  * has arrived meanwhile -- decoupled from whether the overlay happens to
  * be the currently active screen, so metadata keeps updating even if the
  * user navigated away from it. */
+/* AirPlay/DLNA are persisted but nothing is running at process start, so the
+ * saved state is brought up once per process after Wi-Fi associates. The
+ * grace period lets DHCP finish: shairport's mDNS snapshots the interface
+ * addresses at launch. */
+#define SAVED_SERVICES_RESTORE_DELAY_MS 3000
+static bool saved_airplay_restore_pending = true;
+static bool saved_dlna_restore_pending = true;
+static uint32_t saved_services_connected_tick;
+static bool saved_services_connected_seen;
+
+static void restore_saved_wireless_services(void) {
+    if (!saved_airplay_restore_pending && !saved_dlna_restore_pending) return;
+    if (!gui_shell_wifi_connected()) {
+        saved_services_connected_seen = false;
+        return;
+    }
+    if (!saved_services_connected_seen) {
+        saved_services_connected_seen = true;
+        saved_services_connected_tick = lv_tick_get();
+        return;
+    }
+    if (lv_tick_elaps(saved_services_connected_tick) < SAVED_SERVICES_RESTORE_DELAY_MS) return;
+
+    if (saved_airplay_restore_pending) {
+        saved_airplay_restore_pending = false;
+        if (current_settings.wifi_dac_mode_enabled && !airplay_control_is_active()) {
+            char name[64];
+            get_device_name(name, sizeof(name));
+            if (current_settings.bt_dac_mode_enabled || !airplay_control_start(name)) {
+                current_settings.wifi_dac_mode_enabled = false;
+                settings_save_async(&current_settings);
+            }
+            refresh_airplay_screen_if_built();
+        }
+    }
+    if (saved_dlna_restore_pending) {
+        if (!current_settings.dlna_renderer_enabled) {
+            saved_dlna_restore_pending = false;
+        } else if (!network_service_is_busy(NETWORK_SERVICE_DLNA) &&
+                   network_service_enqueue(NETWORK_SERVICE_DLNA, true, false)) {
+            saved_dlna_restore_pending = false;
+        }
+    }
+}
+
 void gui_network_poll_airplay_overlay(void) {
+    restore_saved_wireless_services();
     /* Self-heals a respawn failure from airplay_control_disconnect_active_
      * stream()'s kill-and-respawn (gui_player.c, triggered by local playback
      * resuming while AirPlay was streaming) -- that path deliberately
@@ -4042,7 +4089,8 @@ void gui_network_poll_airplay_overlay(void) {
      * so this is the only place such a failure ever gets noticed and the
      * persisted setting corrected, same as airplay_toggle_cb()'s own
      * synchronous failure handling a few hundred lines up in this file. */
-    if (current_settings.wifi_dac_mode_enabled && !airplay_control_is_active()) {
+    if (!saved_airplay_restore_pending && current_settings.wifi_dac_mode_enabled &&
+        !airplay_control_is_active()) {
         current_settings.wifi_dac_mode_enabled = false;
         settings_save(&current_settings);
         show_error_toast(TR("AirPlay stopped unexpectedly"));

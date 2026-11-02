@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 /* Unix domain socket where dmrd expects its playback companion to listen. */
 #define DMR_STREAMER_SOCKET_PATH "/data/dmr_streamer"
@@ -92,7 +93,13 @@ typedef struct {
 
 /* Maps supported audio Content-Type MIME strings to file extensions recognized
  * by decoder_open(). Returns NULL for unrecognized types. */
-static const char * extension_for_content_type(const char * content_type) {
+static const char * extension_for_content_type(const char * raw_content_type) {
+    char content_type[128];
+    while (*raw_content_type == ' ' || *raw_content_type == '\t') raw_content_type++;
+    size_t len = strcspn(raw_content_type, "; \t");
+    if (len >= sizeof(content_type)) return NULL;
+    memcpy(content_type, raw_content_type, len);
+    content_type[len] = '\0';
     if (strcasecmp(content_type, "audio/flac") == 0 || strcasecmp(content_type, "audio/x-flac") == 0) return ".flac";
     if (strcasecmp(content_type, "audio/mpeg") == 0 || strcasecmp(content_type, "audio/mp3") == 0) return ".mp3";
     if (strcasecmp(content_type, "audio/wav") == 0 || strcasecmp(content_type, "audio/x-wav") == 0 ||
@@ -109,6 +116,31 @@ static const char * extension_for_content_type(const char * content_type) {
     return NULL;
 }
 
+/* A superseded cast (newer play@, stop, or service stop) aborts its download
+ * instead of finishing a full lossless file in parallel with the new one. */
+static bool dlna_download_progress_cb(uint64_t bytes_downloaded, uint64_t total_bytes, void * user_data) {
+    (void) bytes_downloaded;
+    (void) total_bytes;
+    const dlna_download_request_t * req = (const dlna_download_request_t *) user_data;
+    pthread_mutex_lock(&dlna_mutex);
+    bool current = req->generation == dlna_download_generation;
+    pthread_mutex_unlock(&dlna_mutex);
+    return current;
+}
+
+static void remove_stale_cast_files(void) {
+    DIR * d = opendir(DLNA_TEMP_DOWNLOAD_DIR);
+    if (!d) return;
+    struct dirent * ent;
+    char path[600];
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "dlna_track.", 11) != 0) continue;
+        snprintf(path, sizeof(path), DLNA_TEMP_DOWNLOAD_DIR "/%s", ent->d_name);
+        remove(path);
+    }
+    closedir(d);
+}
+
 static void * dlna_download_thread_func(void * arg) {
     dlna_download_request_t * req = (dlna_download_request_t *) arg;
 
@@ -119,7 +151,7 @@ static void * dlna_download_thread_func(void * arg) {
              (unsigned long long) req->generation);
 
     char content_type[128];
-    bool ok = http_get_to_file_ex(req->uri, true, temp_path, NULL, NULL,
+    bool ok = http_get_to_file_ex(req->uri, true, temp_path, dlna_download_progress_cb, req,
                                    content_type, sizeof(content_type));
     if (!ok) {
         DBG_LOG("dlna_control: download failed for '%s'\n", req->uri);
@@ -246,6 +278,7 @@ static void handle_connection(int cfd) {
     } else if ((size_t) n >= 4 && memcmp(buf, "stop", 4) == 0) {
         pthread_mutex_lock(&dlna_mutex);
         cast_intent_playing = false;
+        ++dlna_download_generation;
         pthread_mutex_unlock(&dlna_mutex);
         atomic_store_explicit(&stop_requested, true, memory_order_release); /* Consumed by LVGL/main thread */
     }
@@ -298,6 +331,11 @@ void dlna_control_start(void) {
         pthread_mutex_unlock(&listener_mutex);
         return;
     }
+
+    remove_stale_cast_files();
+    pthread_mutex_lock(&dlna_mutex);
+    last_produced_path[0] = '\0';
+    pthread_mutex_unlock(&dlna_mutex);
 
     char * dmrd_argv[] = { (char *) "/usr/bin/dmrd", NULL };
     subprocess_spawn_daemon(dmrd_argv);
