@@ -402,6 +402,7 @@ static void quick_drawer_pack_primary_captions(void) {
 static lv_obj_t * quick_drawer_expansion_box = NULL;
 static lv_obj_t * quick_drawer_expansion_handle = NULL;
 static lv_obj_t * quick_drawer_card = NULL;
+static lv_obj_t * quick_drawer_panel = NULL;
 static lv_obj_t * quick_drawer_airplay_icon = NULL;
 static lv_obj_t * quick_drawer_dlna_icon = NULL;
 static lv_obj_t * quick_drawer_gapless_icon = NULL;
@@ -454,6 +455,14 @@ static void quick_drawer_begin_expansion_composition(void);
 static void quick_drawer_sync_cached_eq(void);
 static void quick_drawer_mark_geometry_dirty(void);
 static void quick_drawer_discard_expansion_art(void);
+
+#if !defined(BOARD_TEMPOTEC_V1)
+/* Collapsed card top, and the volume row's pitch the card (and the panel's
+ * bottom edge) rise by while that row is hidden. */
+#define QUICK_DRAWER_CARD_Y (QUICK_DRAWER_PANEL_Y + QUICK_DRAWER_PANEL_H - QUICK_DRAWER_CARD_INSET - QUICK_DRAWER_CARD_H)
+#define QUICK_DRAWER_VOLUME_ROW_PITCH (BOARD_SCALE_PY(325) - BOARD_SCALE_PY(238))
+#define QUICK_DRAWER_EQ_BUTTON_Y BOARD_SCALE_PY(416)
+#endif
 
 static void quick_drawer_register_shift_obj(lv_obj_t * obj, int32_t base_y) {
     if (!obj || quick_drawer_shift_count >= QUICK_DRAWER_SHIFT_MAX) return;
@@ -886,12 +895,12 @@ static void quick_drawer_refresh_volume(void) {
     if (quick_drawer_volume_label) lv_label_set_text_fmt(quick_drawer_volume_label, "%d", percent);
 }
 
-/* `text` overrides the usual "On"/"Off" caption -- a plugin tile can publish
- * its own pair (GainMode's "High"/"Low"). NULL keeps the default. */
+/* Native tiles show no state caption (the icon already carries on/off); a
+ * plugin tile can still publish its own pair (GainMode's "High"/"Low"). */
 static void quick_drawer_set_toggle_state_text(int index, bool enabled, const char * text) {
     if (index < 0 || index >= QUICK_DRAWER_TOGGLE_SLOTS) return;
     if (!quick_drawer_toggle_state[index]) return;
-    const char * caption = text ? text : (enabled ? TR("On") : TR("Off"));
+    const char * caption = text ? text : "";
     lv_color_t color = enabled ? shell_drawer_on_color() : shell_drawer_off_color;
     if (ui_label_text_matches(quick_drawer_toggle_state[index], caption) &&
         lv_color_eq(lv_obj_get_style_text_color(quick_drawer_toggle_state[index], 0), color)) return;
@@ -3847,6 +3856,18 @@ void gui_shell_refresh_quick_drawer_volume_visibility(void) {
         else
             lv_obj_add_flag(row[i], LV_OBJ_FLAG_HIDDEN);
     }
+#if !defined(BOARD_TEMPOTEC_V1)
+    /* A hidden volume row gives its slot to the now-playing card. */
+    int32_t lift = ui_customization_drawer_volume_visible() ? 0 : QUICK_DRAWER_VOLUME_ROW_PITCH;
+    if (quick_drawer_panel) lv_obj_set_height(quick_drawer_panel, QUICK_DRAWER_PANEL_H - lift);
+    if (quick_drawer_card) lv_obj_set_y(quick_drawer_card, QUICK_DRAWER_CARD_Y - lift);
+    for (int i = 0; i < quick_drawer_shift_count; i++) {
+        if (quick_drawer_shift_objs[i].obj != quick_drawer_eq_button) continue;
+        quick_drawer_shift_objs[i].base_y = QUICK_DRAWER_EQ_BUTTON_Y - lift;
+        lv_obj_set_y(quick_drawer_eq_button, quick_drawer_shift_objs[i].base_y + quick_drawer_expansion_y);
+    }
+    quick_drawer_mark_geometry_dirty();
+#endif
     quick_drawer_mark_snapshot_dirty();
 }
 
@@ -5878,6 +5899,7 @@ static void build_quick_drawer(void) {
      * panel independent of the vendor backdrop asset so every native 480x800
      * coordinate remains explicit and stable across theme revisions. */
     lv_obj_t * drawer_panel = lv_obj_create(quick_drawer);
+    quick_drawer_panel = drawer_panel;
     lv_obj_remove_style_all(drawer_panel);
     lv_obj_set_pos(drawer_panel, QUICK_DRAWER_PANEL_X, QUICK_DRAWER_PANEL_Y);
     /* 726, not 683: the panel used to stop at y=742 on an 800px screen and
@@ -6084,7 +6106,7 @@ static void build_quick_drawer(void) {
     lv_obj_set_style_text_font(quick_drawer_toggle_state[i], fallback_font_ui_12(), 0);
         lv_obj_align(quick_drawer_toggle_state[i], LV_ALIGN_TOP_LEFT, QD_LOOP1_X,
                      quick_drawer_toggle_state_y(QUICK_DRAWER_ROW1_TOP));
-        lv_label_set_text(quick_drawer_toggle_state[i], TR("Off"));
+        lv_label_set_text(quick_drawer_toggle_state[i], "");
         lv_obj_set_style_text_color(quick_drawer_toggle_state[i], shell_drawer_off_color, 0);
     }
     quick_drawer_set_toggle_state(0, gui_shell_wifi_effective_enabled());
@@ -6166,7 +6188,7 @@ static void build_quick_drawer(void) {
 #else
                        quick_drawer_toggle_state_y(0));
 #endif
-        lv_label_set_text(quick_drawer_toggle_state[slot], TR("Off"));
+        lv_label_set_text(quick_drawer_toggle_state[slot], "");
         lv_obj_set_style_text_color(quick_drawer_toggle_state[slot], shell_drawer_off_color, 0);
 
         switch (slot) {
@@ -6295,7 +6317,7 @@ static void build_quick_drawer(void) {
     lv_obj_set_size(quick_drawer_brightness_icon, BOARD_SCALE_PX(36), BOARD_SCALE_PY(45));
     lv_obj_align(quick_drawer_brightness_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(54), BOARD_SCALE_PY(290));
 #else
-    lv_obj_align(quick_drawer_brightness_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(55), BOARD_SCALE_PY(259));
+    lv_obj_align(quick_drawer_brightness_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(55), BOARD_SCALE_PY(243));
 #endif
 
     /* Fixed size, so the percentage does not follow the Font Size tier, and
@@ -6390,7 +6412,7 @@ static void build_quick_drawer(void) {
     lv_obj_set_size(quick_drawer_volume_icon, BOARD_SCALE_PX(36), BOARD_SCALE_PY(45));
     lv_obj_align(quick_drawer_volume_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(54), BOARD_SCALE_PY(375));
 #else
-    lv_obj_align(quick_drawer_volume_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(55), BOARD_SCALE_PY(346));
+    lv_obj_align(quick_drawer_volume_icon, LV_ALIGN_TOP_LEFT, BOARD_SCALE_PX(55), BOARD_SCALE_PY(330));
 #endif
     lv_obj_add_flag(quick_drawer_volume_icon, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(quick_drawer_volume_icon, quick_drawer_eq_long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
@@ -6461,11 +6483,11 @@ static void build_quick_drawer(void) {
 #else
     quick_drawer_register_shift_obj(quick_drawer_expansion_handle, BOARD_SCALE_PY(219));
     quick_drawer_register_shift_obj(brightness_container, BOARD_SCALE_PY(238));
-    quick_drawer_register_shift_obj(quick_drawer_brightness_icon, BOARD_SCALE_PY(259));
+    quick_drawer_register_shift_obj(quick_drawer_brightness_icon, BOARD_SCALE_PY(243));
     quick_drawer_register_shift_obj(quick_drawer_brightness_label, BOARD_SCALE_PY(267) + slider_pct_dy);
     quick_drawer_register_shift_obj(quick_drawer_brightness_track, BOARD_SCALE_PY(267));
     quick_drawer_register_shift_obj(quick_drawer_volume_container, BOARD_SCALE_PY(325));
-    quick_drawer_register_shift_obj(quick_drawer_volume_icon, BOARD_SCALE_PY(346));
+    quick_drawer_register_shift_obj(quick_drawer_volume_icon, BOARD_SCALE_PY(330));
     quick_drawer_register_shift_obj(quick_drawer_volume_label, BOARD_SCALE_PY(354) + slider_pct_dy);
     quick_drawer_register_shift_obj(quick_drawer_volume_track, BOARD_SCALE_PY(354));
 #endif
@@ -6728,7 +6750,7 @@ static void build_quick_drawer(void) {
     lv_obj_set_pos(quick_drawer_eq_button, BOARD_SCALE_PX(360), BOARD_SCALE_PY(5));
     lv_obj_set_size(quick_drawer_eq_button, BOARD_SCALE_PX(36), BOARD_SCALE_PX(36));
 #else
-    lv_obj_set_pos(quick_drawer_eq_button, BOARD_SCALE_PX(394), BOARD_SCALE_PY(416));
+    lv_obj_set_pos(quick_drawer_eq_button, BOARD_SCALE_PX(394), QUICK_DRAWER_EQ_BUTTON_Y);
     lv_obj_set_size(quick_drawer_eq_button, BOARD_SCALE_PX(44), BOARD_SCALE_PY(44));
 #endif
     lv_obj_add_style(quick_drawer_eq_button, &style_theme_card_bg, 0);
@@ -6752,7 +6774,7 @@ static void build_quick_drawer(void) {
 #if defined(BOARD_TEMPOTEC_V1)
     /* It is a card child, so it hides and moves with all card metadata. */
 #else
-    quick_drawer_register_shift_obj(quick_drawer_eq_button, BOARD_SCALE_PY(416));
+    quick_drawer_register_shift_obj(quick_drawer_eq_button, QUICK_DRAWER_EQ_BUTTON_Y);
 #endif
 
     gui_shell_refresh_quick_drawer_cover();
@@ -7133,6 +7155,7 @@ void gui_shell_teardown(void) {
     quick_drawer_expansion_box = NULL;
     quick_drawer_expansion_handle = NULL;
     quick_drawer_card = NULL;
+    quick_drawer_panel = NULL;
     quick_drawer_airplay_icon = NULL;
     quick_drawer_dlna_icon = NULL;
     quick_drawer_gapless_icon = NULL;
