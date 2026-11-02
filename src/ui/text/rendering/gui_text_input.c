@@ -1,4 +1,7 @@
 #include "gui_text_input.h"
+#include "pinyin_table.h"
+#include "../i18n/i18n.h"
+#include "../../../core/persistence/settings.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,6 +113,14 @@ static bool text_entry_caps_lock = false; /* persistent: toggled by re-tapping t
 static bool text_entry_numeric_only = false;
 static bool text_entry_qwerty_latin_mode = false;
 static int text_entry_keyboard_layout = KEYBOARD_LAYOUT_QWERTY;
+static bool text_entry_is_password = false;
+static bool text_entry_pinyin_on = false;
+static char text_entry_pinyin[8];
+#define PINYIN_BAR_H BOARD_SCALE_PY(52)
+#define PINYIN_CANDIDATE_MAX 36
+static lv_obj_t * text_entry_pinyin_bar;
+static lv_obj_t * text_entry_pinyin_spell;
+static lv_obj_t * text_entry_pinyin_btns[PINYIN_CANDIDATE_MAX];
 
 static bool text_entry_is_uppercase(void) {
     return text_entry_caps_lock || text_entry_shift;
@@ -523,6 +534,8 @@ static lv_obj_t * text_entry_make_key(lv_obj_t * scr, int col, int row, lv_event
 #define QWERTY_KEY_LETTERS "abc"
 #define QWERTY_KEY_ACCENTS "àé"
 #define QWERTY_KEY_CYRILLIC "абв"
+#define QWERTY_KEY_ZH "中"
+#define QWERTY_KEY_EN "EN"
 
 /* Character keys fire on release (like the T9 image keys' LV_EVENT_CLICKED) so
  * a back-swipe that starts on a key does not type; Backspace keeps
@@ -574,6 +587,33 @@ static const char * const qwerty_map_upper[] = {
     "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
     QWERTY_KEY_SHIFT, "Z", "X", "C", "V", "B", "N", "M", QWERTY_KEY_BACKSPACE, "\n",
     QWERTY_ROW4(QWERTY_KEY_NUMBERS, QWERTY_KEY_ACCENTS), ""
+};
+
+/* Chinese UI: the accents shortcut becomes 中 (switch into pinyin) or EN
+ * (switch back to direct Latin). Accents stay on long-press and the accent page. */
+static const char * const qwerty_map_lower_zh[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    QWERTY_KEY_SHIFT, "z", "x", "c", "v", "b", "n", "m", QWERTY_KEY_BACKSPACE, "\n",
+    QWERTY_ROW4(QWERTY_KEY_NUMBERS, QWERTY_KEY_ZH), ""
+};
+static const char * const qwerty_map_upper_zh[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    QWERTY_KEY_SHIFT, "Z", "X", "C", "V", "B", "N", "M", QWERTY_KEY_BACKSPACE, "\n",
+    QWERTY_ROW4(QWERTY_KEY_NUMBERS, QWERTY_KEY_ZH), ""
+};
+static const char * const qwerty_map_lower_en[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    QWERTY_KEY_SHIFT, "z", "x", "c", "v", "b", "n", "m", QWERTY_KEY_BACKSPACE, "\n",
+    QWERTY_ROW4(QWERTY_KEY_NUMBERS, QWERTY_KEY_EN), ""
+};
+static const char * const qwerty_map_upper_en[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    QWERTY_KEY_SHIFT, "Z", "X", "C", "V", "B", "N", "M", QWERTY_KEY_BACKSPACE, "\n",
+    QWERTY_ROW4(QWERTY_KEY_NUMBERS, QWERTY_KEY_EN), ""
 };
 
 /* Layout variants reuse the same key geometry and controls. They are applied
@@ -724,6 +764,10 @@ QWERTY_ASSERT_MAP_CTRL(qwerty_map_latin_cyr_upper, qwerty_ctrl_letters, "Latin C
 
 _Static_assert(QWERTY_MAP_LEN(qwerty_map_lower) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty lower map/ctrl mismatch");
 _Static_assert(QWERTY_MAP_LEN(qwerty_map_upper) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty upper map/ctrl mismatch");
+_Static_assert(QWERTY_MAP_LEN(qwerty_map_lower_zh) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty zh map/ctrl mismatch");
+_Static_assert(QWERTY_MAP_LEN(qwerty_map_upper_zh) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty zh upper map/ctrl mismatch");
+_Static_assert(QWERTY_MAP_LEN(qwerty_map_lower_en) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty en map/ctrl mismatch");
+_Static_assert(QWERTY_MAP_LEN(qwerty_map_upper_en) == QWERTY_CTRL_LEN(qwerty_ctrl_letters) + 4, "qwerty en upper map/ctrl mismatch");
 _Static_assert(QWERTY_MAP_LEN(qwerty_map_special) == QWERTY_CTRL_LEN(qwerty_ctrl_wide) + 4, "qwerty special map/ctrl mismatch");
 _Static_assert(QWERTY_MAP_LEN(qwerty_map_symbols) == QWERTY_CTRL_LEN(qwerty_ctrl_wide) + 4, "qwerty symbols map/ctrl mismatch");
 _Static_assert(QWERTY_MAP_LEN(qwerty_map_accents_lower) == QWERTY_CTRL_LEN(qwerty_ctrl_accents) + 4, "qwerty accents map/ctrl mismatch");
@@ -735,6 +779,106 @@ static lv_keyboard_mode_t text_entry_qwerty_page(void) {
     if (mode == LV_KEYBOARD_MODE_TEXT_UPPER) return LV_KEYBOARD_MODE_TEXT_LOWER;
     if (mode == LV_KEYBOARD_MODE_USER_3) return LV_KEYBOARD_MODE_USER_2;
     return mode;
+}
+
+static bool text_entry_ime_offered(void) {
+    const char * lang = i18n_get_language();
+    if (!lang || strncmp(lang, "zh", 2) != 0) return false;
+    if (text_entry_numeric_only) return false;
+    return text_entry_keyboard_layout == KEYBOARD_LAYOUT_QWERTY;
+}
+
+static void text_entry_pinyin_refresh(void) {
+    if (!text_entry_pinyin_bar) return;
+    if (!text_entry_pinyin_on || !text_entry_pinyin[0]) {
+        lv_obj_add_flag(text_entry_pinyin_bar, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text(text_entry_pinyin_spell, text_entry_pinyin);
+    int count = pinyin_candidate_count(text_entry_pinyin);
+    for (int i = 0; i < PINYIN_CANDIDATE_MAX; i++) {
+        lv_obj_t * btn = text_entry_pinyin_btns[i];
+        if (!btn) continue;
+        char utf8[4];
+        if (i < count && pinyin_candidate_utf8(text_entry_pinyin, i, utf8)) {
+            lv_label_set_text(lv_obj_get_child(btn, 0), utf8);
+            lv_obj_remove_flag(btn, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(btn, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_obj_remove_flag(text_entry_pinyin_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_scroll_to_x(text_entry_pinyin_bar, 0, LV_ANIM_OFF);
+    lv_obj_move_foreground(text_entry_pinyin_bar);
+}
+
+static void text_entry_pinyin_clear(void) {
+    text_entry_pinyin[0] = '\0';
+    text_entry_pinyin_refresh();
+}
+
+static void text_entry_pinyin_commit_first(void) {
+    if (!text_entry_pinyin[0] || !text_entry_textarea) return;
+    char utf8[4];
+    if (pinyin_candidate_utf8(text_entry_pinyin, 0, utf8))
+        lv_textarea_add_text(text_entry_textarea, utf8);
+    else
+        lv_textarea_add_text(text_entry_textarea, text_entry_pinyin);
+    text_entry_pinyin[0] = '\0';
+    text_entry_pinyin_refresh();
+}
+
+static bool text_entry_pinyin_key_letter(const char * txt, char * out) {
+    if (!txt || !txt[0] || txt[1] != '\0') return false;
+    char c = txt[0];
+    if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
+    if (c < 'a' || c > 'z') return false;
+    *out = c;
+    return true;
+}
+
+static void text_entry_pinyin_type(char c) {
+    char trial[8];
+    size_t n = strlen(text_entry_pinyin);
+    if (n + 1 >= sizeof(text_entry_pinyin)) {
+        text_entry_pinyin_commit_first();
+        n = 0;
+    }
+    memcpy(trial, text_entry_pinyin, n);
+    trial[n] = c;
+    trial[n + 1] = '\0';
+    if (pinyin_is_prefix(trial)) {
+        memcpy(text_entry_pinyin, trial, n + 2);
+        text_entry_pinyin_refresh();
+        return;
+    }
+    if (n > 0 && pinyin_is_exact(text_entry_pinyin)) {
+        text_entry_pinyin_commit_first();
+        trial[0] = c;
+        trial[1] = '\0';
+        if (pinyin_is_prefix(trial)) {
+            text_entry_pinyin[0] = c;
+            text_entry_pinyin[1] = '\0';
+            text_entry_pinyin_refresh();
+        }
+    }
+}
+
+static void text_entry_pinyin_backspace(void) {
+    size_t n = strlen(text_entry_pinyin);
+    if (!n) return;
+    text_entry_pinyin[n - 1] = '\0';
+    text_entry_pinyin_refresh();
+}
+
+static void text_entry_pinyin_pick_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED || !text_entry_textarea) return;
+    lv_obj_t * label = lv_obj_get_child(lv_event_get_target(e), 0);
+    const char * txt = label ? lv_label_get_text(label) : NULL;
+    if (!txt || !txt[0]) return;
+    text_entry_finalize_pending();
+    lv_textarea_add_text(text_entry_textarea, txt);
+    text_entry_pinyin_clear();
 }
 
 /* Install the selected language's maps on the singleton keyboard. The
@@ -771,7 +915,17 @@ static void text_entry_qwerty_apply_layout(bool latin_mode) {
             break;
         default:
             /* Latin QWERTY is the single default for every language without
-             * a distinct physical arrangement. */
+             * a distinct physical arrangement. Chinese replaces the accent
+             * shortcut with the pinyin / Latin switch. */
+            if (text_entry_ime_offered()) {
+                if (text_entry_pinyin_on) {
+                    lower = qwerty_map_lower_en;
+                    upper = qwerty_map_upper_en;
+                } else {
+                    lower = qwerty_map_lower_zh;
+                    upper = qwerty_map_upper_zh;
+                }
+            }
             break;
     }
 
@@ -787,6 +941,8 @@ static void text_entry_qwerty_apply_layout(bool latin_mode) {
             : (cyrillic ? &lv_font_montserrat_22 : &lv_font_montserrat_26);
         if (font->line_height > cap->line_height)
             font = app_font_16.line_height <= cap->line_height ? &app_font_16 : cap;
+        /* Montserrat has no CJK, so the 中 key must stay on the fallback face. */
+        if (text_entry_ime_offered() && font == cap) font = &app_font_16;
     }
     lv_obj_set_style_text_font(text_entry_qwerty_kb, font, LV_PART_ITEMS);
 
@@ -1023,6 +1179,7 @@ static void text_entry_variant_show(const char * key, lv_indev_t * indev) {
 
 static void text_entry_qwerty_long_press_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+    if (text_entry_pinyin_on) return;
     lv_obj_t * kb = lv_event_get_current_target(e);
     uint32_t btn = lv_buttonmatrix_get_selected_button(kb);
     if (btn == LV_BUTTONMATRIX_BUTTON_NONE) return;
@@ -1062,6 +1219,44 @@ static void text_entry_qwerty_event_cb(lv_event_t * e) {
     const char * txt = lv_buttonmatrix_get_button_text(kb, btn);
     if (!txt) return;
     text_entry_finalize_pending();
+
+    if (text_entry_pinyin_on) {
+        char letter;
+        if (text_entry_pinyin_key_letter(txt, &letter) &&
+            !lv_buttonmatrix_has_button_ctrl(kb, btn, LV_BUTTONMATRIX_CTRL_CUSTOM_1)) {
+            text_entry_pinyin_type(letter);
+            if (text_entry_shift) {
+                text_entry_shift = false;
+                text_entry_qwerty_show(text_entry_qwerty_page());
+            }
+            return;
+        }
+        if (strcmp(txt, QWERTY_KEY_EN) == 0) {
+            text_entry_pinyin_commit_first();
+            text_entry_pinyin_on = false;
+            text_entry_qwerty_apply_layout(text_entry_qwerty_latin_mode);
+            text_entry_qwerty_show(LV_KEYBOARD_MODE_TEXT_LOWER);
+            return;
+        }
+        if (text_entry_pinyin[0] && strcmp(txt, QWERTY_KEY_BACKSPACE) == 0) {
+            text_entry_pinyin_backspace();
+            return;
+        }
+        if (text_entry_pinyin[0] && strcmp(txt, QWERTY_KEY_SHIFT) != 0) {
+            text_entry_pinyin_commit_first();
+            if (strcmp(txt, QWERTY_KEY_SPACE) == 0) return;
+            if (strcmp(txt, QWERTY_KEY_ENTER) == 0) {
+                text_entry_enter();
+                return;
+            }
+        }
+    } else if (strcmp(txt, QWERTY_KEY_ZH) == 0) {
+        text_entry_pinyin_on = true;
+        text_entry_pinyin_clear();
+        text_entry_qwerty_apply_layout(text_entry_qwerty_latin_mode);
+        text_entry_qwerty_show(LV_KEYBOARD_MODE_TEXT_LOWER);
+        return;
+    }
 
     if (!lv_buttonmatrix_has_button_ctrl(kb, btn, LV_BUTTONMATRIX_CTRL_CUSTOM_1)) {
         lv_textarea_add_text(text_entry_textarea, txt);
@@ -1250,6 +1445,54 @@ static lv_obj_t * text_entry_make_container(lv_obj_t * parent) {
     return obj;
 }
 
+static void text_entry_build_pinyin_bar(lv_obj_t * group) {
+    lv_obj_t * bar = lv_obj_create(group);
+    text_entry_pinyin_bar = bar;
+    lv_obj_set_size(bar, lv_pct(100), PINYIN_BAR_H);
+    lv_obj_set_pos(bar, 0, TEXT_ENTRY_GRID_Y - PINYIN_BAR_H);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scroll_dir(bar, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(bar, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_style(bar, &style_theme_screen_bg, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_pad_left(bar, BOARD_SCALE_PX(4), 0);
+    lv_obj_set_style_pad_right(bar, BOARD_SCALE_PX(4), 0);
+    lv_obj_set_style_pad_top(bar, 0, 0);
+    lv_obj_set_style_pad_bottom(bar, 0, 0);
+    lv_obj_set_style_pad_column(bar, BOARD_SCALE_PX(4), 0);
+    lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+
+    text_entry_pinyin_spell = lv_label_create(bar);
+    lv_obj_add_style(text_entry_pinyin_spell, &style_theme_text_muted, 0);
+    lv_obj_set_style_text_font(text_entry_pinyin_spell, &app_font_16, 0);
+    lv_label_set_text(text_entry_pinyin_spell, "");
+
+    const lv_font_t * font = gui_theme_font(GUI_FONT_ROLE_BODY);
+    int32_t cell = font->line_height + BOARD_SCALE_PX(8);
+    if (cell < BOARD_SCALE_PY(36)) cell = BOARD_SCALE_PY(36);
+    for (int i = 0; i < PINYIN_CANDIDATE_MAX; i++) {
+        lv_obj_t * btn = lv_obj_create(bar);
+        text_entry_pinyin_btns[i] = btn;
+        lv_obj_set_size(btn, cell, lv_pct(80));
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_add_style(btn, &style_theme_card_bg, 0);
+        lv_obj_add_style(btn, &list_row_pressed_style, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, BOARD_SCALE_PX(6), 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn, text_entry_pinyin_pick_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_t * label = lv_label_create(btn);
+        lv_obj_add_style(label, &style_theme_text_primary, 0);
+        lv_obj_set_style_text_font(label, font, 0);
+        lv_obj_center(label);
+    }
+}
+
 static lv_obj_t * build_t9_keypad_group(lv_obj_t * parent) {
     lv_obj_t * group = text_entry_make_container(parent);
     lv_obj_t * pad = text_entry_make_container(group);
@@ -1335,6 +1578,7 @@ static lv_obj_t * build_t9_keypad_group(lv_obj_t * parent) {
 
     text_entry_qwerty_kb = build_qwerty_keyboard(group);
     lv_obj_add_flag(text_entry_qwerty_kb, LV_OBJ_FLAG_HIDDEN);
+    text_entry_build_pinyin_bar(group);
 
     /* Lets a swipe started on the keypad (inline search's Enter key sits
      * right where a right-swipe could plausibly start) still bubble up to
@@ -1365,6 +1609,8 @@ static void text_entry_select_layout(void) {
         text_entry_keyboard_layout == KEYBOARD_LAYOUT_LEGACY_6 ||
         text_entry_keyboard_layout < KEYBOARD_LAYOUT_T9 || text_entry_keyboard_layout > KEYBOARD_LAYOUT_UKRAINIAN)
         text_entry_keyboard_layout = KEYBOARD_LAYOUT_QWERTY;
+    text_entry_pinyin_on = text_entry_ime_offered() && !text_entry_is_password;
+    text_entry_pinyin[0] = '\0';
     if (text_entry_use_qwerty()) {
         lv_obj_add_flag(text_entry_t9_pad, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(text_entry_qwerty_kb, LV_OBJ_FLAG_HIDDEN);
@@ -1374,7 +1620,9 @@ static void text_entry_select_layout(void) {
     } else {
         lv_obj_remove_flag(text_entry_t9_pad, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(text_entry_qwerty_kb, LV_OBJ_FLAG_HIDDEN);
+        text_entry_pinyin_on = false;
     }
+    text_entry_pinyin_refresh();
 }
 
 /* Reparents the shared keypad_group + text_entry_textarea onto
@@ -1401,6 +1649,7 @@ void t9_keypad_attach(lv_obj_t * target_screen, lv_obj_t * textarea_parent, int3
     text_entry_shift = false;
     text_entry_caps_lock = false;
     text_entry_numeric_only = false;
+    text_entry_is_password = false;
     text_entry_select_layout();
     text_entry_finalize_pending();
     text_entry_refresh_keys();
@@ -1522,6 +1771,7 @@ void show_text_entry(const char * title, const char * initial_text, bool is_pass
     text_entry_shift = false;
     text_entry_caps_lock = false;
     text_entry_numeric_only = numeric;
+    text_entry_is_password = is_password;
     text_entry_select_layout();
     text_entry_finalize_pending();
     text_entry_refresh_keys();
@@ -1557,6 +1807,11 @@ void gui_text_input_teardown(void) {
     if (text_entry_screen) { lv_obj_delete(text_entry_screen); text_entry_screen = NULL; }
     text_entry_t9_pad = NULL;
     text_entry_qwerty_kb = NULL;
+    text_entry_pinyin_bar = NULL;
+    text_entry_pinyin_spell = NULL;
+    memset(text_entry_pinyin_btns, 0, sizeof(text_entry_pinyin_btns));
+    text_entry_pinyin[0] = '\0';
+    text_entry_pinyin_on = false;
 }
 
 lv_obj_t * gui_text_input_get_screen(void) {
