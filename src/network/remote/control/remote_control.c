@@ -3090,7 +3090,7 @@ static void handle_connection(int cfd) {
                 "\"folder_browse\",\"recently_played\",\"favorites_edit\",\"queue_edit\","
                 "\"playlist_edit\",\"playlist_import\",\"player_accent\",\"device_info\","
                 "\"collection_playback\",\"shuffle_modes\",\"library_sorting\","
-                "\"wifi_import\",\"wifi_import_files\",\"settings_v1\",\"plugin_store\",\"plugin_management\",\"player_layouts\"],"
+                "\"wifi_import\",\"wifi_import_files\",\"wifi_import_files_read\",\"settings_v1\",\"plugin_store\",\"plugin_management\",\"player_layouts\"],"
                 "\"settingsSchemaVersion\":%d}", library_id_field, SETTINGS_REGISTRY_SCHEMA_VERSION);
             send_response(cfd, "200 OK", "application/json", capabilities);
             return;

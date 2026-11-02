@@ -701,6 +701,67 @@ static bool handle_mkdir(int fd, const char *path) {
     send_json(fd, "201 Created", "{\"ok\":true}"); return true;
 }
 
+static bool handle_download(int fd, const char *path) {
+    const char *keys[] = {"path"}; char values[1][IMPORT_PATH_MAX + 1]; bool have[1];
+    if (!query_parse(path, keys, values, have, 1) || !have[0] || !path_string_valid(values[0], false)) { send_error(fd, "400 Bad Request", "invalid_path"); return true; }
+    int root = root_dup(); if (root < 0) { send_error(fd, "409 Conflict", "import_not_ready"); return true; }
+    char leaf[IMPORT_NAME_MAX + 1]; int parent = resolve_parent(root, values[0], leaf, sizeof(leaf)); close(root);
+    if (parent < 0) { send_error(fd, "404 Not Found", "item_not_found"); return true; }
+    int in = openat(parent, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    close(parent);
+    struct stat st;
+    if (in < 0 || fstat(in, &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (in >= 0) close(in);
+        send_error(fd, "404 Not Found", "item_not_found"); return true;
+    }
+    char h[256];
+    int n = snprintf(h, sizeof(h), "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %llu\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n", (unsigned long long)st.st_size);
+    if (n <= 0 || !send_all(fd, h, (size_t)n)) { close(in); return true; }
+    char *buffer = malloc(IMPORT_BODY_BUFFER);
+    off_t remaining = st.st_size;
+    while (buffer && remaining > 0 && !request_stopped()) {
+        ssize_t got = read(in, buffer, IMPORT_BODY_BUFFER);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0 || !send_all(fd, buffer, (size_t)got)) break;
+        remaining -= got;
+    }
+    free(buffer);
+    close(in);
+    return true;
+}
+
+static bool handle_move(int fd, const char *path) {
+    const char *keys[] = {"path", "to"}; char values[2][IMPORT_PATH_MAX + 1]; bool have[2];
+    if (!query_parse(path, keys, values, have, 2) || !have[0] || !have[1] ||
+        !path_string_valid(values[0], false) || !path_string_valid(values[1], false)) { send_error(fd, "400 Bad Request", "invalid_path"); return true; }
+    if (!strcmp(values[0], values[1])) { send_json(fd, "200 OK", "{\"ok\":true}"); return true; }
+    size_t src_len = strlen(values[0]);
+    if (!strncmp(values[1], values[0], src_len) && values[1][src_len] == '/') { send_error(fd, "400 Bad Request", "invalid_path"); return true; }
+    int root = root_dup(); if (root < 0) { send_error(fd, "409 Conflict", "import_not_ready"); return true; }
+    if (!begin_mutation(fd)) { close(root); return true; }
+    char src_leaf[IMPORT_NAME_MAX + 1], dst_leaf[IMPORT_NAME_MAX + 1];
+    int src_parent = resolve_parent(root, values[0], src_leaf, sizeof(src_leaf));
+    int dst_parent = src_parent >= 0 ? resolve_parent(root, values[1], dst_leaf, sizeof(dst_leaf)) : -1;
+    close(root);
+    if (src_parent < 0 || dst_parent < 0) {
+        if (src_parent >= 0) close(src_parent);
+        end_mutation(); send_error(fd, "404 Not Found", "item_not_found"); return true;
+    }
+    struct stat src, dst;
+    bool ok = fstatat(src_parent, src_leaf, &src, AT_SYMLINK_NOFOLLOW) == 0 &&
+              (S_ISREG(src.st_mode) || S_ISDIR(src.st_mode));
+    if (!ok) errno = ENOENT;
+    else if (fstatat(dst_parent, dst_leaf, &dst, AT_SYMLINK_NOFOLLOW) == 0) { errno = EEXIST; ok = false; }
+    else if (errno != ENOENT || rename_noreplace(src_parent, src_leaf, dst_parent, dst_leaf) != 0) ok = false;
+    int err = errno; close(src_parent); close(dst_parent); end_mutation();
+    if (!ok) {
+        const char *status = err == ECANCELED ? "503 Service Unavailable" : err == EEXIST ? "409 Conflict" : err == ENOENT ? "404 Not Found" : "400 Bad Request";
+        const char *code = err == ECANCELED ? "import_stopped" : err == EEXIST ? "name_exists" : err == ENOENT ? "item_not_found" : "move_failed";
+        send_error(fd, status, code); return true;
+    }
+    send_json(fd, "200 OK", "{\"ok\":true}"); return true;
+}
+
 bool remote_import_files_handle(int fd, const char *method, const char *path,
                                 long long content_length, bool wifi_transport) {
     const char *q = strchr(path, '?');
@@ -712,7 +773,9 @@ bool remote_import_files_handle(int fd, const char *method, const char *path,
                    (!strcmp(route, "/api/import/files/upload") && !strcmp(method, "POST")) ||
                    (!strcmp(route, "/api/import/files/rename") && !strcmp(method, "POST")) ||
                    (!strcmp(route, "/api/import/files/delete") && !strcmp(method, "POST")) ||
-                   (!strcmp(route, "/api/import/files/mkdir") && !strcmp(method, "POST"));
+                   (!strcmp(route, "/api/import/files/mkdir") && !strcmp(method, "POST")) ||
+                   (!strcmp(route, "/api/import/files/download") && !strcmp(method, "GET")) ||
+                   (!strcmp(route, "/api/import/files/move") && !strcmp(method, "POST"));
     if (!matched) return false;
     pthread_mutex_lock(&import_mu);
     bool active = import_ready && !atomic_load(&import_stopping);
@@ -723,6 +786,8 @@ bool remote_import_files_handle(int fd, const char *method, const char *path,
     else if (!strcmp(route, "/api/import/files/upload")) (void)handle_upload(fd, path, content_length, wifi_transport);
     else if (!strcmp(route, "/api/import/files/rename")) (void)handle_rename(fd, path);
     else if (!strcmp(route, "/api/import/files/delete")) (void)handle_delete(fd, path);
+    else if (!strcmp(route, "/api/import/files/download")) (void)handle_download(fd, path);
+    else if (!strcmp(route, "/api/import/files/move")) (void)handle_move(fd, path);
     else (void)handle_mkdir(fd, path);
     pthread_mutex_lock(&import_mu);
     if (active_requests) active_requests--;
