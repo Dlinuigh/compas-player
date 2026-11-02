@@ -293,6 +293,7 @@ static void set_defaults(player_settings_t * out) {
     out->sleep_timer_minutes = 15;
     out->timezone[0] = '\0';
     out->hostname[0] = '\0'; /* empty -- stock's own /usr/resource/hostname stays in effect */
+    out->http_proxy[0] = '\0';
     out->font_size_tier = 1;
     out->keyboard_layout = KEYBOARD_LAYOUT_QWERTY;
     out->lyrics_font_size_tier = 1; /* Medium -- see settings.h's own comment */
@@ -685,6 +686,8 @@ bool settings_load(player_settings_t * out) {
             snprintf(out->timezone, sizeof(out->timezone), "%s", value);
         } else if (strcmp(key, "hostname") == 0) {
             snprintf(out->hostname, sizeof(out->hostname), "%s", value);
+        } else if (strcmp(key, "http_proxy") == 0) {
+            snprintf(out->http_proxy, sizeof(out->http_proxy), "%s", value);
         } else if (strcmp(key, "font_size_tier") == 0) {
             out->font_size_tier = atoi(value);
         } else if (strcmp(key, "keyboard_layout") == 0) {
@@ -944,6 +947,7 @@ static void settings_write_file(const player_settings_t * settings) {
     fprintf(f, "sleep_timer_minutes=%d\n", settings->sleep_timer_minutes);
     fprintf(f, "timezone=%s\n", settings->timezone);
     fprintf(f, "hostname=%s\n", settings->hostname);
+    fprintf(f, "http_proxy=%s\n", settings->http_proxy);
     fprintf(f, "font_size_tier=%d\n", settings->font_size_tier);
     int keyboard_layout = normalize_keyboard_layout(settings->keyboard_layout);
     fprintf(f, "keyboard_layout=%d\n", keyboard_layout);

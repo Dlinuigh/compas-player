@@ -606,6 +606,7 @@ static const char * http_conn_error_to_str(http_conn_error_t e) {
         case HTTP_CONN_ERR_TLS_HANDSHAKE: return HTTP_ERR_TLS;
         case HTTP_CONN_ERR_TLS_HANDSHAKE_TIMEOUT: return HTTP_ERR_TIMEOUT;
         case HTTP_CONN_ERR_TLS_VERIFY: return HTTP_ERR_TLS;
+        case HTTP_CONN_ERR_PROXY: return HTTP_ERR_CONNECT;
     }
     return HTTP_ERR_CONNECT;
 }

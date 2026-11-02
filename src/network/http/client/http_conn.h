@@ -25,8 +25,20 @@ typedef enum {
     HTTP_CONN_ERR_TLS_SETUP,
     HTTP_CONN_ERR_TLS_HANDSHAKE,
     HTTP_CONN_ERR_TLS_HANDSHAKE_TIMEOUT,
-    HTTP_CONN_ERR_TLS_VERIFY
+    HTTP_CONN_ERR_TLS_VERIFY,
+    HTTP_CONN_ERR_PROXY
 } http_conn_error_t;
+
+/* Parses "host:port" (optional "http://" prefix and trailing '/', IPv6 as
+ * "[addr]:port") into host/port. Empty or whitespace-only text is valid and
+ * yields an empty host, meaning "no proxy". Returns false on malformed text. */
+bool http_conn_parse_proxy(const char * text, char * host, size_t host_size, char * port, size_t port_size);
+
+/* Sets the process-wide HTTP CONNECT proxy every later http_conn_open_ex()
+ * tunnels through (plain HTTP and HTTPS alike). Empty clears it. Thread-safe;
+ * connections already open are unaffected. Returns false (leaving the
+ * current proxy unchanged) when text is malformed. */
+bool http_conn_set_proxy(const char * text);
 
 /* Low-level HTTP(S) connection primitives shared by http_client and http_stream:
  * URL parsing, opening plain TCP or mbedTLS connections, and buffered

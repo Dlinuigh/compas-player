@@ -9,7 +9,9 @@
 #include "../../security/ca_bundle.h"
 
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -247,6 +249,126 @@ static http_conn_error_t net_connect_timeout(mbedtls_net_context * ctx, const ch
     return result;
 }
 
+static pthread_mutex_t proxy_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char proxy_host[256];
+static char proxy_port[8];
+
+bool http_conn_parse_proxy(const char * text, char * host, size_t host_size, char * port, size_t port_size) {
+    if (!host || host_size == 0 || !port || port_size == 0) return false;
+    host[0] = '\0';
+    port[0] = '\0';
+    if (!text) return true;
+
+    while (*text == ' ' || *text == '\t') text++;
+    if (strncasecmp(text, "http://", 7) == 0) text += 7;
+    size_t len = strlen(text);
+    while (len > 0 && (text[len - 1] == ' ' || text[len - 1] == '\t' || text[len - 1] == '/')) len--;
+    if (len == 0) return true;
+
+    const char * host_start = text;
+    size_t host_len;
+    const char * colon;
+    if (text[0] == '[') {
+        const char * close = memchr(text, ']', len);
+        if (!close || close + 1 >= text + len || close[1] != ':') return false;
+        host_start = text + 1;
+        host_len = (size_t) (close - host_start);
+        colon = close + 1;
+    } else {
+        colon = NULL;
+        for (size_t i = 0; i < len; i++) {
+            if (text[i] == ':') {
+                if (colon) return false;
+                colon = text + i;
+            }
+        }
+        if (!colon) return false;
+        host_len = (size_t) (colon - text);
+    }
+    if (host_len == 0 || host_len >= host_size) return false;
+    for (size_t i = 0; i < host_len; i++) {
+        unsigned char c = (unsigned char) host_start[i];
+        if (c <= ' ' || c == '/' || c == '@' || c >= 0x7f) return false;
+    }
+
+    const char * port_start = colon + 1;
+    size_t port_len = (size_t) (text + len - port_start);
+    if (port_len == 0 || port_len > 5 || port_len >= port_size) return false;
+    unsigned value = 0;
+    for (size_t i = 0; i < port_len; i++) {
+        if (port_start[i] < '0' || port_start[i] > '9') return false;
+        value = value * 10 + (unsigned) (port_start[i] - '0');
+    }
+    if (value == 0 || value > 65535) return false;
+
+    memcpy(host, host_start, host_len);
+    host[host_len] = '\0';
+    snprintf(port, port_size, "%u", value);
+    return true;
+}
+
+bool http_conn_set_proxy(const char * text) {
+    char host[sizeof(proxy_host)];
+    char port[sizeof(proxy_port)];
+    if (!http_conn_parse_proxy(text, host, sizeof(host), port, sizeof(port))) return false;
+    pthread_mutex_lock(&proxy_mutex);
+    snprintf(proxy_host, sizeof(proxy_host), "%s", host);
+    snprintf(proxy_port, sizeof(proxy_port), "%s", port);
+    pthread_mutex_unlock(&proxy_mutex);
+    return true;
+}
+
+static bool proxy_snapshot(char * host, size_t host_size, char * port, size_t port_size) {
+    pthread_mutex_lock(&proxy_mutex);
+    bool enabled = proxy_host[0] != '\0';
+    snprintf(host, host_size, "%s", proxy_host);
+    snprintf(port, port_size, "%s", proxy_port);
+    pthread_mutex_unlock(&proxy_mutex);
+    return enabled;
+}
+
+/* Issues CONNECT host:port over an already-connected proxy socket and
+ * consumes the proxy's response headers byte by byte, so nothing past the
+ * blank line (the tunnelled peer's first bytes) is swallowed. */
+static http_conn_error_t proxy_connect_tunnel(mbedtls_net_context * net, const char * host, const char * port,
+                                              struct http_cancel_token * cancel) {
+    char authority[300];
+    snprintf(authority, sizeof(authority), strchr(host, ':') ? "[%s]:%s" : "%s:%s", host, port);
+
+    char request[700];
+    int request_len = snprintf(request, sizeof(request),
+                               "CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Compas/compas_player\r\n"
+                               "Proxy-Connection: Keep-Alive\r\n\r\n",
+                               authority, authority);
+    if (request_len <= 0 || (size_t) request_len >= sizeof(request)) return HTTP_CONN_ERR_PROXY;
+
+    size_t sent = 0;
+    while (sent < (size_t) request_len) {
+        int n = mbedtls_net_send(net, (const unsigned char *) request + sent, (size_t) request_len - sent);
+        if (n <= 0) return cancel_requested_conn(cancel) ? HTTP_CONN_ERR_CANCELLED : HTTP_CONN_ERR_PROXY;
+        sent += (size_t) n;
+    }
+
+    char response[256];
+    size_t got = 0;
+    size_t total = 0;
+    uint32_t tail = 0;
+    for (;;) {
+        unsigned char c;
+        int n = mbedtls_net_recv(net, &c, 1);
+        if (n <= 0) return cancel_requested_conn(cancel) ? HTTP_CONN_ERR_CANCELLED : HTTP_CONN_ERR_PROXY;
+        if (got + 1 < sizeof(response)) response[got++] = (char) c;
+        if (++total > 16384) return HTTP_CONN_ERR_PROXY;
+        tail = (tail << 8) | c;
+        if (tail == 0x0D0A0D0AU) break;
+    }
+    response[got] = '\0';
+
+    int status = 0;
+    if (sscanf(response, "HTTP/%*d.%*d %d", &status) != 1) return HTTP_CONN_ERR_PROXY;
+    return (status >= 200 && status < 300) ? HTTP_CONN_OK : HTTP_CONN_ERR_PROXY;
+}
+
 bool http_conn_open_ex(http_conn_t * conn, const char * host, const char * port, bool https, bool verify_tls,
                         uint32_t connect_timeout_ms, uint32_t read_timeout_ms,
                         struct http_cancel_token * cancel, http_conn_error_t * out_error) {
@@ -259,13 +381,23 @@ bool http_conn_open_ex(http_conn_t * conn, const char * host, const char * port,
     conn->cancel_token = cancel;
     mbedtls_net_init(&conn->net);
 
-    *out_error = net_connect_timeout(&conn->net, host, port, connect_timeout_ms, cancel);
+    char via_host[sizeof(proxy_host)];
+    char via_port[sizeof(proxy_port)];
+    bool use_proxy = proxy_snapshot(via_host, sizeof(via_host), via_port, sizeof(via_port));
+
+    *out_error = use_proxy ? net_connect_timeout(&conn->net, via_host, via_port, connect_timeout_ms, cancel)
+                           : net_connect_timeout(&conn->net, host, port, connect_timeout_ms, cancel);
     if (*out_error != HTTP_CONN_OK) return false;
 
     if (read_timeout_ms > 0) {
         struct timeval tv = { .tv_sec = (time_t) (read_timeout_ms / 1000), .tv_usec = (suseconds_t) (read_timeout_ms % 1000) * 1000 };
         setsockopt(conn->net.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(conn->net.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+
+    if (use_proxy) {
+        *out_error = proxy_connect_tunnel(&conn->net, host, port, cancel);
+        if (*out_error != HTTP_CONN_OK) return false;
     }
 
     if (!https) return true;
