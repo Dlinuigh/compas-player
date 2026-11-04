@@ -626,6 +626,9 @@ static plugin_order_editor_callback_t plugin_order_editor_callback = { NULL, LUA
  *     screenshot_saved(path) or screenshot_failed(reason) on the UI thread.
  *
  *   plugin.led_available() -> bool
+ *   plugin.led_pattern_count() -> int  (11 on SGM31324 boards, else 0)
+ *   plugin.led_set/blink/breathe first arg may be a pattern id 0..count-1
+ *     on pattern boards, or "red"/"blue" on all LED boards
  *     True when both charge-status LED brightness sysfs nodes exist on this
  *     board.
  *
@@ -4753,6 +4756,25 @@ static led_control_color_t check_led_color(lua_State * L, const char * api) {
     return LED_CONTROL_RED; /* unreachable -- luaL_error() longjmps */
 }
 
+/* On SGM31324 boards the first argument may be a pattern id 0..N-1 instead
+ * of "red"/"blue". Returns true when the caller passed a pattern id. */
+static bool check_led_target(lua_State * L, const char * api, led_control_color_t * color, int * pattern) {
+    if (lua_type(L, 1) == LUA_TNUMBER) {
+        int count = led_control_pattern_count();
+        if (count <= 0)
+            luaL_error(L, "%s: pattern ids are not available on this board", api);
+        lua_Integer value = luaL_checkinteger(L, 1);
+        if (value < 0 || value >= count)
+            luaL_error(L, "%s: pattern must be 0..%d", api, count - 1);
+        *pattern = (int) value;
+        *color = LED_CONTROL_RED;
+        return true;
+    }
+    *color = check_led_color(L, api);
+    *pattern = -1;
+    return false;
+}
+
 static int check_led_level(lua_State * L, int arg, int default_level, const char * api) {
     (void) api;
     if (lua_gettop(L) < arg || lua_isnil(L, arg)) return default_level;
@@ -4775,8 +4797,15 @@ static int l_plugin_led_available(lua_State * L) {
     return 1;
 }
 
+static int l_plugin_led_pattern_count(lua_State * L) {
+    lua_pushinteger(L, led_control_pattern_count());
+    return 1;
+}
+
 static int l_plugin_led_set(lua_State * L) {
-    led_control_color_t color = check_led_color(L, "plugin.led_set");
+    led_control_color_t color = LED_CONTROL_RED;
+    int pattern = -1;
+    bool use_pattern = check_led_target(L, "plugin.led_set", &color, &pattern);
     int level;
     if (lua_type(L, 2) == LUA_TBOOLEAN) {
         level = lua_toboolean(L, 2) ? 100 : 0;
@@ -4789,12 +4818,15 @@ static int l_plugin_led_set(lua_State * L) {
         return luaL_error(L, "plugin.led_set: charge-status LEDs are not available on this board");
 
     plugin_led_override_owner = plugin_lua_main_state(L);
-    led_control_set_override(color, level);
+    if (use_pattern) led_control_set_override_pattern(pattern, level);
+    else led_control_set_override(color, level);
     return 0;
 }
 
 static int l_plugin_led_blink(lua_State * L) {
-    led_control_color_t color = check_led_color(L, "plugin.led_blink");
+    led_control_color_t color = LED_CONTROL_RED;
+    int pattern = -1;
+    bool use_pattern = check_led_target(L, "plugin.led_blink", &color, &pattern);
     int on_ms = check_led_interval(L, 2, "plugin.led_blink");
     int off_ms = check_led_interval(L, 3, "plugin.led_blink");
     int level = check_led_level(L, 4, 100, "plugin.led_blink");
@@ -4802,13 +4834,16 @@ static int l_plugin_led_blink(lua_State * L) {
         return luaL_error(L, "plugin.led_blink: charge-status LEDs are not available on this board");
 
     plugin_led_override_owner = plugin_lua_main_state(L);
-    if (!led_control_blink(color, on_ms, off_ms, level))
-        return luaL_error(L, "plugin.led_blink: could not create an LVGL effect timer");
+    bool ok = use_pattern ? led_control_blink_pattern(pattern, on_ms, off_ms, level)
+                          : led_control_blink(color, on_ms, off_ms, level);
+    if (!ok) return luaL_error(L, "plugin.led_blink: could not create an LVGL effect timer");
     return 0;
 }
 
 static int l_plugin_led_breathe(lua_State * L) {
-    led_control_color_t color = check_led_color(L, "plugin.led_breathe");
+    led_control_color_t color = LED_CONTROL_RED;
+    int pattern = -1;
+    bool use_pattern = check_led_target(L, "plugin.led_breathe", &color, &pattern);
     lua_Integer input = luaL_checkinteger(L, 2);
     if (input < 1)
         return luaL_error(L, "plugin.led_breathe: period or breaths per minute must be positive");
@@ -4824,8 +4859,9 @@ static int l_plugin_led_breathe(lua_State * L) {
         return luaL_error(L, "plugin.led_breathe: charge-status LEDs are not available on this board");
 
     plugin_led_override_owner = plugin_lua_main_state(L);
-    if (!led_control_breathe(color, period_ms, level))
-        return luaL_error(L, "plugin.led_breathe: could not create an LVGL effect timer");
+    bool ok = use_pattern ? led_control_breathe_pattern(pattern, period_ms, level)
+                          : led_control_breathe(color, period_ms, level);
+    if (!ok) return luaL_error(L, "plugin.led_breathe: could not create an LVGL effect timer");
     return 0;
 }
 
@@ -5044,6 +5080,7 @@ static const luaL_Reg plugin_funcs[] = {
     { "has_capability",            l_plugin_has_capability },
     { "get_app_info",              l_plugin_get_app_info },
     { "led_available",             l_plugin_led_available },
+    { "led_pattern_count",         l_plugin_led_pattern_count },
     { "led_set",                   l_plugin_led_set },
     { "led_blink",                 l_plugin_led_blink },
     { "led_breathe",               l_plugin_led_breathe },
