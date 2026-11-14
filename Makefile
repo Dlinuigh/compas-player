@@ -46,6 +46,9 @@ endif
 ifneq ($(UI_HITBOX_DEBUG),)
 BUILD_VARIANT += _hitbox
 endif
+ifneq ($(FORTUNE_SHELL),)
+BUILD_VARIANT += _fortune
+endif
 ifneq ($(TEST_BUILD_TAG),)
 BUILD_VARIANT += _tag_$(shell printf '%s' '$(TEST_BUILD_TAG)' | tr -c 'A-Za-z0-9_.\n-' _)
 endif
@@ -507,8 +510,8 @@ endif
 CFLAGS = -O3 -g -Wall -fwrapv -MMD -MP -I. -Isrc/audio -Isrc/network -Isrc/library -Isrc/hardware -Isrc/ui -Isrc/ui/player -Isrc/ui/library -Isrc/core -Isrc/plugins -Isrc/plugins/bindings -I$(LVGL_DIR) -I$(DR_LIBS_DIR) -I$(FAAD2_DIR)/include -I$(ALAC_DIR)/codec -I$(MBEDTLS_DIR)/include -I$(CJSON_DIR) -I$(OPUS_DIR)/include -I$(OPUSFILE_DIR)/include -Ilibogg_vendor_config -I$(OGG_DIR)/include -I$(LUA_DIR)/src -I$(STB_VORBIS_DIR) -Ijpeg_vendor_config -I$(JPEG_DIR) -DLV_CONF_INCLUDE_SIMPLE=1
 CFLAGS += -I$(WAVPACK_DIR)/include -I$(SNDFILE_DIR)/include
 CXXFLAGS = $(filter-out -Wall,$(CFLAGS)) -std=c++11
-HOST_CFLAGS = $(CFLAGS) -DHOST_BUILD=1 $(BOARD_DEFINE) $(UI_PERF_TRACE_DEFINE) $(shell sdl2-config --cflags) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
-HOST_CXXFLAGS = $(CXXFLAGS) -DHOST_BUILD=1 $(BOARD_DEFINE) $(UI_PERF_TRACE_DEFINE) $(shell sdl2-config --cflags) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
+HOST_CFLAGS = $(CFLAGS) -DHOST_BUILD=1 $(BOARD_DEFINE) $(UI_PERF_TRACE_DEFINE) $(FORTUNE_SHELL_DEFINE) $(shell sdl2-config --cflags) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
+HOST_CXXFLAGS = $(CXXFLAGS) -DHOST_BUILD=1 $(BOARD_DEFINE) $(UI_PERF_TRACE_DEFINE) $(FORTUNE_SHELL_DEFINE) $(shell sdl2-config --cflags) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
 # Optional: `make target TEST_BUILD_TAG=test25_avrcp` -- replaces the release
 # label in About with a conspicuous test-build identity, so a binary running
 # on the device can be identified without checking timestamps or hashes.
@@ -557,6 +560,11 @@ ifneq ($(UI_HITBOX_DEBUG),)
 UI_HITBOX_DEBUG_DEFINE = -DUI_HITBOX_DEBUG=1
 endif
 
+# Lean ForTune Hiby shell (三 Tab + 原生网易云 + 本地库). `make host FORTUNE_SHELL=1`
+ifneq ($(FORTUNE_SHELL),)
+FORTUNE_SHELL_DEFINE = -DFORTUNE_SHELL=1
+endif
+
 # Always defined (no flag needed) for the machine-facing build identifier used
 # by plugin.get_app_info() and the bootloader version comparison. Re-evaluated
 # on every `make target` invocation, so it reflects when this binary was built,
@@ -567,13 +575,13 @@ BUILD_STAMP_DEFINE = -DBUILD_STAMP=\"$(shell date +%Y-%m-%d_%H:%M)\"
 # #include <execinfo.h> resolves to on target: musl (unlike host's glibc)
 # ships no execinfo.h/backtrace() of its own, which is what main.c's SIGSEGV
 # handler needs. Host build doesn't need this -- glibc already provides it.
-TARGET_CFLAGS = $(CFLAGS) -I$(LIBEXECINFO_DIR) -I$(LVGL_DIR)/src -I$(TINYALSA_DIR)/include -Idbus_vendor_config -I$(DBUS_DIR) $(BOARD_DEFINE) $(TEST_BUILD_TAG_DEFINE) $(RELEASE_LABEL_DEFINE) $(UI_PERF_TRACE_DEFINE) $(UI_GESTURE_TRACE_DEFINE) $(UI_HITBOX_DEBUG_DEFINE) $(BUILD_STAMP_DEFINE) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
+TARGET_CFLAGS = $(CFLAGS) -I$(LIBEXECINFO_DIR) -I$(LVGL_DIR)/src -I$(TINYALSA_DIR)/include -Idbus_vendor_config -I$(DBUS_DIR) $(BOARD_DEFINE) $(TEST_BUILD_TAG_DEFINE) $(RELEASE_LABEL_DEFINE) $(UI_PERF_TRACE_DEFINE) $(UI_GESTURE_TRACE_DEFINE) $(UI_HITBOX_DEBUG_DEFINE) $(FORTUNE_SHELL_DEFINE) $(BUILD_STAMP_DEFINE) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
 # Compile target translation units into per-function/data sections so the
 # target linker's existing --gc-sections can discard unused library code.
 # Override with TARGET_CODE_SECTION_FLAGS= for staged linker-GC comparisons.
 TARGET_CODE_SECTION_FLAGS ?= -ffunction-sections -fdata-sections
 TARGET_CFLAGS += $(TARGET_CPU_FLAGS) $(TARGET_CODE_SECTION_FLAGS)
-TARGET_CXXFLAGS = $(CXXFLAGS) -I$(LIBEXECINFO_DIR) -I$(LVGL_DIR)/src -I$(TINYALSA_DIR)/include -Idbus_vendor_config -I$(DBUS_DIR) $(BOARD_DEFINE) $(TEST_BUILD_TAG_DEFINE) $(RELEASE_LABEL_DEFINE) $(UI_PERF_TRACE_DEFINE) $(UI_GESTURE_TRACE_DEFINE) $(UI_HITBOX_DEBUG_DEFINE) $(BUILD_STAMP_DEFINE) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS $(TARGET_CPU_FLAGS)
+TARGET_CXXFLAGS = $(CXXFLAGS) -I$(LIBEXECINFO_DIR) -I$(LVGL_DIR)/src -I$(TINYALSA_DIR)/include -Idbus_vendor_config -I$(DBUS_DIR) $(BOARD_DEFINE) $(TEST_BUILD_TAG_DEFINE) $(RELEASE_LABEL_DEFINE) $(UI_PERF_TRACE_DEFINE) $(UI_GESTURE_TRACE_DEFINE) $(UI_HITBOX_DEBUG_DEFINE) $(FORTUNE_SHELL_DEFINE) $(BUILD_STAMP_DEFINE) -I$(TINFL_DIR) -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS $(TARGET_CPU_FLAGS)
 TARGET_CXXFLAGS += $(TARGET_CODE_SECTION_FLAGS)
 TINYALSA_CFLAGS = -O3 -g -Wall -I$(TINYALSA_DIR)/include -I$(TINYALSA_DIR)/src
 # DBUS_COMPILATION/DBUS_STATIC_BUILD: libdbus's own headers gate some
@@ -729,6 +737,10 @@ APP_SRCS += src/ui/settings/controls/gui_external_controls.c
 APP_SRCS += src/ui/plugins/manage/gui_plugin_order_editor.c
 APP_SRCS += src/ui/player/settings/gui_equalizer.c
 APP_SRCS += src/ui/home/gui_home.c src/ui/home/home_background.c
+ifneq ($(FORTUNE_SHELL),)
+APP_SRCS += src/ui/fortune/fortune_shell.c
+APP_SRCS += src/netease/netease_eapi.c src/netease/netease_client.c
+endif
 APP_SRCS += src/network/radio/aic_radio.c src/network/radio/aic_radio_policy.c
 APP_SRCS += src/ui/updates/gui_updates.c
 APP_SRCS += src/ui/appearance/gui_accent.c

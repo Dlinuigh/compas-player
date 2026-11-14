@@ -52,6 +52,11 @@ Start with the [installation guide](https://compasplayer.org/guide.html#01-insta
 
 For later updates, use **Settings → Updates**. To update from the SD card, save the matching player binary as `SD/.compas/compas_player`. Use full firmware when the release notes require new fonts or graphics. Back up your files and keep power connected during installation.
 
+## Docs
+
+- [Developer tutorial (firmware architecture, main loop, flash workflow)](docs/developer-tutorial.md) — Chinese, for people changing the player C code
+- Official add-on guides: [Plugins / layouts / themes](https://compasplayer.org/developers.html)
+
 ## Build
 
 Install Git, Make, a C/C++ compiler, CMake, Python 3, patch, curl, xz and pkg-config. For device builds, set up the MIPS musl toolchain:
@@ -64,6 +69,10 @@ make bootloader BOARD=r1
 ```
 
 Use `BOARD=r3proii` or `BOARD=r3ii_2025` for the other models. For the desktop simulator, install SDL2 and run `make host`. Fonts and theme assets are supplied separately. This repository builds executables; firmware images are packaged separately.
+
+## ForTune Hiby (lean shell)
+
+Branch `fortune-hiby`: build with `FORTUNE_SHELL=1` for a ForTune-like three-tab player (NetEase + local library only). See [`docs/fortune/`](docs/fortune/).
 
 ## Thanks
 

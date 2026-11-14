@@ -235,12 +235,16 @@ static void build_player_update_popups(void) {
         player_update_cancel_cb, &player_update_confirm_popup.backdrop);
 }
 
-void gui_updates_player_row_cb(lv_event_t * e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+void gui_updates_open_player_menu(void) {
     if (player_update_menu) lv_obj_remove_flag(player_update_menu, LV_OBJ_FLAG_HIDDEN);
     if (player_update_backdrop) lv_obj_remove_flag(player_update_backdrop, LV_OBJ_FLAG_HIDDEN);
     if (player_update_backdrop) lv_obj_move_foreground(player_update_backdrop);
     if (player_update_menu) lv_obj_move_foreground(player_update_menu);
+}
+
+void gui_updates_player_row_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    gui_updates_open_player_menu();
 }
 
 static void poll_player_update(void) {

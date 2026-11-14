@@ -21,6 +21,9 @@
 #include "../settings/gui_settings.h"
 #include "../network/gui_network.h"
 #include "../library/collections/gui_books.h"
+#ifdef FORTUNE_SHELL
+#include "../fortune/fortune_shell.h"
+#endif
 #include "../text/rendering/gui_text_input.h"
 #include "../text/rendering/gui_text_view.h"
 #include "../player/screen/gui_lyrics.h"
@@ -1094,6 +1097,9 @@ static void poll_background_jobs(void) {
     poll_wifi_disconnect();
     poll_wifi_forget();
     gui_shell_poll();
+#ifdef FORTUNE_SHELL
+    fortune_shell_poll();
+#endif
     plugin_manager_poll();
     poll_bt_scan();
     poll_bt_rate_query();
@@ -1995,9 +2001,11 @@ void gui_init(uint32_t screen_width, uint32_t screen_height) {
 #ifndef HOST_BUILD
     boot_checkpoint("gui_library_init done");
 #endif
+#ifndef FORTUNE_SHELL
     /* Warms the first ALBUM_THUMBNAIL_CACHE_SIZE album thumbnails into RAM
      * (and the rest onto disk) before the user ever opens Albums. */
     gui_library_start_boot_thumbnail_warmup();
+#endif
 #ifndef HOST_BUILD
     boot_checkpoint("gui_network_init begin");
 #endif
@@ -2012,6 +2020,9 @@ void gui_init(uint32_t screen_width, uint32_t screen_height) {
 #ifndef HOST_BUILD
     boot_checkpoint("gui_settings_init done");
 #endif
+#ifdef FORTUNE_SHELL
+    fortune_shell_init();
+#else
     gui_plugin_manage_init();
 #ifndef HOST_BUILD
     boot_checkpoint("gui_plugin_store_init begin");
@@ -2022,14 +2033,17 @@ void gui_init(uint32_t screen_width, uint32_t screen_height) {
 #endif
     gui_emulator_store_init();
     gui_books_init();
+#endif
     build_power_off_countdown_popup();
     gui_queue_init();
+#ifndef FORTUNE_SHELL
 #ifndef HOST_BUILD
     boot_checkpoint("gui_plugins_init begin");
 #endif
     gui_plugins_init();
 #ifndef HOST_BUILD
     boot_checkpoint("gui_plugins_init done");
+#endif
 #endif
 #ifndef HOST_BUILD
     boot_checkpoint("gui_shell_init begin");

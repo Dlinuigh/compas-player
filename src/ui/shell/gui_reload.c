@@ -101,6 +101,9 @@
 #include "../library/browse/gui_library.h"
 #include "../network/gui_network.h"
 #include "../settings/gui_settings.h"
+#ifdef FORTUNE_SHELL
+#include "../fortune/fortune_shell.h"
+#endif
 #include "../library/collections/gui_books.h"
 #include "../library/browse/gui_file_manager.h"
 #include "../plugins/emulators/gui_emulator_store.h"
@@ -251,22 +254,30 @@ static void gui_soft_reload_with_artwork(bool preserve_artwork,
     gui_network_init();
     reload_diag("gui_settings_init: before");
     gui_settings_init();
+#ifdef FORTUNE_SHELL
+    fortune_shell_init();
+#else
     reload_diag("gui_plugin_manage_init: before");
     gui_plugin_manage_init();
     reload_diag("gui_plugin_store_init: before");
     gui_plugin_store_init();
     reload_diag("gui_emulator_store_init: before");
     gui_emulator_store_init();
+#endif
     reload_diag("gui_lock_screen_init: before");
     gui_lock_screen_init();
+#ifndef FORTUNE_SHELL
     reload_diag("gui_books_init: before");
     gui_books_init();
+#endif
     reload_diag("build_power_off_countdown_popup: before");
     build_power_off_countdown_popup();
     reload_diag("gui_queue_init: before");
     gui_queue_init();
+#ifndef FORTUNE_SHELL
     reload_diag("gui_plugins_init: before");
     gui_plugins_init();
+#endif
     reload_diag("gui_shell_build_screens: before");
     gui_shell_build_screens((uint32_t) screen_width, (uint32_t) screen_height);
     /* Theme setters ran mid-rebuild and skipped these (see gui_plugins.c). */

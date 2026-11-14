@@ -6,6 +6,9 @@
 #include "../player/settings/gui_equalizer.h"
 #include "../plugins/manage/gui_plugin_order_editor.h"
 #include "../home/gui_home.h"
+#ifdef FORTUNE_SHELL
+#include "../fortune/fortune_shell.h"
+#endif
 #include "../updates/gui_updates.h"
 #include "../appearance/gui_accent.h"
 #include "../appearance/fonts/gui_custom_font.h"
@@ -1969,6 +1972,7 @@ static lv_obj_t * build_settings_screen(void) {
     return scr;
 }
 
+#ifndef FORTUNE_SHELL
 static void stream_media_tile_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     nav_push(stream_media_screen);
@@ -1978,6 +1982,7 @@ static void settings_tile_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     nav_push(settings_screen);
 }
+#endif
 
 /* ---- DAC home screen -- direct shortcut to enabling USB DAC or Bluetooth
  * DAC without going through Settings > System / Wireless > Bluetooth first.
@@ -2072,7 +2077,11 @@ lv_obj_t * build_dac_home_screen(void) {
 }
 
 lv_obj_t * build_home_screen(void) {
+#ifdef FORTUNE_SHELL
+    return fortune_shell_build_home();
+#else
     return gui_home_build_screen(settings_tile_cb, stream_media_tile_cb);
+#endif
 }
 
 /* ---- Reset PEQ to defaults, with a confirmation popup -- same hand-built
