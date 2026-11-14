@@ -20,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [r1, r3proii, r3ii_2025]
+        # ForTune Hiby branch only needs R3 II 2025; other refs keep full matrix.
+        board: ${{ github.ref == 'refs/heads/fortune-hiby' && fromJSON('["r3ii_2025"]') || fromJSON('["r1", "r3proii", "r3ii_2025"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
