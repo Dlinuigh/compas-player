@@ -2,7 +2,6 @@
 #include "netease_eapi.h"
 
 #include "../network/http/client/http_client.h"
-#include "../ui/application/gui.h"
 
 #include "cJSON.h"
 
@@ -222,22 +221,28 @@ void netease_client_init(void) {
 }
 
 void netease_client_poll_session_file(void) {
-    if (try_import_path(SESSION_PATH) || try_import_path(SESSION_PATH_LEGACY)) {
-        cJSON * root = eapi_json("/api/nuser/account/get", "{}");
-        if (root) {
-            cJSON * profile = cJSON_GetObjectItemCaseSensitive(root, "profile");
-            if (cJSON_IsObject(profile)) {
-                cJSON * nick = cJSON_GetObjectItemCaseSensitive(profile, "nickname");
-                cJSON * uid = cJSON_GetObjectItemCaseSensitive(profile, "userId");
-                pthread_mutex_lock(&g_mu);
-                if (cJSON_IsString(nick)) clip(g_nickname, sizeof(g_nickname), nick->valuestring);
-                if (cJSON_IsNumber(uid)) snprintf(g_user_id, sizeof(g_user_id), "%.0f", uid->valuedouble);
-                save_secrets();
-                pthread_mutex_unlock(&g_mu);
-            }
-            cJSON_Delete(root);
-        }
+    (void) try_import_path(SESSION_PATH);
+    (void) try_import_path(SESSION_PATH_LEGACY);
+}
+
+bool netease_client_refresh_account(void) {
+    if (!netease_client_logged_in()) return false;
+    cJSON * root = eapi_json("/api/nuser/account/get", "{}");
+    if (!root) return false;
+    cJSON * profile = cJSON_GetObjectItemCaseSensitive(root, "profile");
+    bool ok = false;
+    if (cJSON_IsObject(profile)) {
+        cJSON * nick = cJSON_GetObjectItemCaseSensitive(profile, "nickname");
+        cJSON * uid = cJSON_GetObjectItemCaseSensitive(profile, "userId");
+        pthread_mutex_lock(&g_mu);
+        if (cJSON_IsString(nick)) clip(g_nickname, sizeof(g_nickname), nick->valuestring);
+        if (cJSON_IsNumber(uid)) snprintf(g_user_id, sizeof(g_user_id), "%.0f", uid->valuedouble);
+        save_secrets();
+        pthread_mutex_unlock(&g_mu);
+        ok = true;
     }
+    cJSON_Delete(root);
+    return ok;
 }
 
 bool netease_client_logged_in(void) {
@@ -441,16 +446,26 @@ bool netease_client_resolve_url(const char * track_id, char * url_out, size_t ur
     return ok;
 }
 
-bool netease_client_play_tracks(const netease_track_t * tracks, int count, int start_index) {
-    if (!tracks || count <= 0) return false;
+bool netease_client_build_remote_queue(const netease_track_t * tracks, int count, int start_index,
+                                       remote_track_meta_t ** out_metas, int * out_count,
+                                       int * out_start_index) {
+    if (out_metas) *out_metas = NULL;
+    if (out_count) *out_count = 0;
+    if (out_start_index) *out_start_index = 0;
+    if (!tracks || count <= 0 || !out_metas || !out_count) return false;
     if (start_index < 0) start_index = 0;
     if (start_index >= count) start_index = 0;
 
-    remote_track_meta_t * metas = (remote_track_meta_t *) calloc((size_t) count, sizeof(*metas));
+    /* Resolve a short window only — full-list URL fetch on a weak link was
+     * hanging/failing and inviting stack/OOM pressure. */
+    enum { WINDOW = 8 };
+    remote_track_meta_t * metas = (remote_track_meta_t *) calloc(WINDOW, sizeof(*metas));
     if (!metas) return false;
 
     int ok_n = 0;
-    for (int i = 0; i < count; i++) {
+    int play_at = 0;
+    for (int n = 0; n < WINDOW && n < count; n++) {
+        int i = (start_index + n) % count;
         remote_track_meta_t * m = &metas[ok_n];
         memset(m, 0, sizeof(*m));
         clip(m->provider, sizeof(m->provider), "netease");
@@ -469,16 +484,16 @@ bool netease_client_play_tracks(const netease_track_t * tracks, int count, int s
             continue;
         }
         clip(m->codec, sizeof(m->codec), codec);
+        if (n == 0) play_at = ok_n;
         ok_n++;
     }
 
-    bool played = false;
-    if (ok_n > 0) {
-        int si = start_index;
-        if (si >= ok_n) si = 0;
-        gui_plugin_play_remote_tracks(metas, ok_n, si);
-        played = true;
+    if (ok_n <= 0) {
+        free(metas);
+        return false;
     }
-    free(metas);
-    return played;
+    *out_metas = metas;
+    *out_count = ok_n;
+    if (out_start_index) *out_start_index = play_at;
+    return true;
 }

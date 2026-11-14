@@ -5,11 +5,14 @@
 #include "../../core/system/logging/db_log.h"
 #include "../../core/system/runtime/board_config.h"
 #include "../../hardware/usb/usb_mode_control.h"
+#include "../../library/remote/remote_track.h"
 #include "../../netease/netease_client.h"
 #include "../appearance/gui_theme.h"
 #include "../library/browse/gui_library.h"
+#include "../application/gui.h"
 #include "../network/gui_network.h"
 #include "../player/screen/gui_player.h"
+#include "../shell/gui_shell.h"
 #include "../shell/gui_navigation.h"
 #include "../shell/gui_notifications.h"
 #include "../text/rendering/gui_text_input.h"
@@ -40,6 +43,10 @@ typedef struct {
     netease_playlist_t playlists[NETEASE_LIST_MAX];
     int track_count;
     int playlist_count;
+    remote_track_meta_t * play_metas;
+    int play_count;
+    int play_start;
+    char err[64];
     bool ok;
 } fortune_job_t;
 
@@ -126,14 +133,9 @@ static void job_done_ui(void * p) {
     set_busy(false);
     if (!job) return;
     if (!job->ok) {
-        show_info_toast("失败");
+        show_info_toast(job->err[0] ? job->err : "失败");
+        free(job->play_metas);
         free(job);
-        if (g_item_count <= 0) {
-            if (g_tab == TAB_HOME) home_menu();
-            else if (g_tab == TAB_LIBRARY) library_menu();
-            else search_menu();
-        }
-        rebuild_content();
         return;
     }
     switch (job->kind) {
@@ -154,14 +156,17 @@ static void job_done_ui(void * p) {
         set_title("歌单");
         rebuild_content();
         break;
-    case JOB_PLAY: {
-        lv_obj_t * player = gui_player_get_screen();
-        if (player) nav_push(player);
+    case JOB_PLAY:
+        if (job->play_metas && job->play_count > 0) {
+            gui_plugin_play_remote_tracks(job->play_metas, job->play_count, job->play_start);
+            lv_obj_t * player = gui_player_get_screen();
+            if (player) nav_push(player);
+        }
         break;
-    }
     default:
         break;
     }
+    free(job->play_metas);
     free(job);
 }
 
@@ -185,22 +190,42 @@ static void * job_worker(void * p) {
         job->ok = netease_client_search_songs(job->arg, job->tracks, NETEASE_LIST_MAX, &job->track_count);
         break;
     case JOB_PLAY:
-        job->ok = netease_client_play_tracks(job->tracks, job->track_count, job->start_index);
+        job->ok = netease_client_build_remote_queue(job->tracks, job->track_count, job->start_index,
+                                                    &job->play_metas, &job->play_count, &job->play_start);
         break;
     default:
         job->ok = false;
         break;
     }
+    if (!job->ok && !job->err[0]) snprintf(job->err, sizeof(job->err), "失败");
     lv_async_call(job_done_ui, job);
     return NULL;
 }
 
+static bool require_online(const char * need_login_msg) {
+    if (!gui_shell_wifi_connected()) {
+        show_info_toast("未联网");
+        return false;
+    }
+    if (!netease_client_logged_in()) {
+        show_info_toast(need_login_msg ? need_login_msg : "未登录");
+        return false;
+    }
+    return true;
+}
+
 static void start_job(fortune_job_t * job) {
-    if (g_busy) { free(job); return; }
+    if (g_busy) {
+        free(job->play_metas);
+        free(job);
+        return;
+    }
     set_busy(true);
     pthread_t th;
-    if (worker_thread_create(&th, 96 * 1024, job_worker, job) != 0) {
+    /* eapi + http_request need headroom; 96KB overflowed and restarted the player. */
+    if (worker_thread_create(&th, 512 * 1024, job_worker, job) != 0) {
         set_busy(false);
+        free(job->play_metas);
         free(job);
         show_info_toast("线程失败");
         return;
@@ -209,6 +234,7 @@ static void start_job(fortune_job_t * job) {
 }
 
 static void start_simple_job(int kind, const char * arg) {
+    if (!require_online("未登录")) return;
     fortune_job_t * job = (fortune_job_t *) calloc(1, sizeof(*job));
     if (!job) return;
     job->kind = kind;
@@ -218,6 +244,7 @@ static void start_simple_job(int kind, const char * arg) {
 
 static void start_play_job(int start_index) {
     if (g_track_count <= 0) return;
+    if (!require_online("未登录")) return;
     fortune_job_t * job = (fortune_job_t *) calloc(1, sizeof(*job));
     if (!job) return;
     job->kind = JOB_PLAY;
