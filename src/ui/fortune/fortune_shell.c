@@ -7,6 +7,8 @@
 #include "../../hardware/usb/usb_mode_control.h"
 #include "../../library/remote/remote_track.h"
 #include "../../netease/netease_client.h"
+#include "../../network/remote/control/remote_control.h"
+#include "../../network/wifi/wifi_control.h"
 #include "../appearance/gui_theme.h"
 #include "../library/browse/gui_library.h"
 #include "../application/gui.h"
@@ -32,7 +34,8 @@ enum {
     JOB_PLAYLIST_TRACKS,
     JOB_LIKED,
     JOB_SEARCH,
-    JOB_PLAY
+    JOB_PLAY,
+    JOB_PAIR_IP
 };
 
 typedef struct {
@@ -66,8 +69,16 @@ static netease_track_t g_tracks[NETEASE_LIST_MAX];
 static int g_track_count;
 static netease_playlist_t g_playlists[NETEASE_LIST_MAX];
 static char g_search_q[128];
+static char g_pair_ip[16];
+static char g_pair_pin[16];
+static bool g_pair_ip_ok;
 
 static const char * const TAB_NAMES[TAB_COUNT] = { "首页", "资料库", "搜索" };
+
+static void ensure_pairing_server(void) {
+    remote_control_get_pin(g_pair_pin, sizeof(g_pair_pin));
+    if (!remote_control_is_running()) remote_control_start();
+}
 
 static void rebuild_content(void);
 static void home_menu(void);
@@ -133,7 +144,12 @@ static void job_done_ui(void * p) {
     set_busy(false);
     if (!job) return;
     if (!job->ok) {
-        show_info_toast(job->err[0] ? job->err : "失败");
+        if (job->kind == JOB_PAIR_IP) {
+            g_pair_ip_ok = false;
+            g_pair_ip[0] = '\0';
+        } else {
+            show_info_toast(job->err[0] ? job->err : "失败");
+        }
         free(job->play_metas);
         free(job);
         return;
@@ -161,6 +177,15 @@ static void job_done_ui(void * p) {
             gui_plugin_play_remote_tracks(job->play_metas, job->play_count, job->play_start);
             lv_obj_t * player = gui_player_get_screen();
             if (player) nav_push(player);
+        }
+        break;
+    case JOB_PAIR_IP:
+        snprintf(g_pair_ip, sizeof(g_pair_ip), "%s", job->arg);
+        g_pair_ip_ok = true;
+        ensure_pairing_server();
+        if (g_tab == TAB_HOME && g_item_kind == 0) {
+            home_menu();
+            rebuild_content();
         }
         break;
     default:
@@ -193,6 +218,14 @@ static void * job_worker(void * p) {
         job->ok = netease_client_build_remote_queue(job->tracks, job->track_count, job->start_index,
                                                     &job->play_metas, &job->play_count, &job->play_start);
         break;
+    case JOB_PAIR_IP: {
+        wifi_info_t info;
+        memset(&info, 0, sizeof(info));
+        job->ok = wifi_control_get_info(&info) && info.ip[0];
+        if (job->ok) snprintf(job->arg, sizeof(job->arg), "%s", info.ip);
+        else snprintf(job->err, sizeof(job->err), "无 IP");
+        break;
+    }
     default:
         job->ok = false;
         break;
@@ -234,12 +267,25 @@ static void start_job(fortune_job_t * job) {
 }
 
 static void start_simple_job(int kind, const char * arg) {
-    if (!require_online("未登录")) return;
+    if (kind != JOB_PAIR_IP && !require_online("未登录")) return;
     fortune_job_t * job = (fortune_job_t *) calloc(1, sizeof(*job));
     if (!job) return;
     job->kind = kind;
     if (arg) snprintf(job->arg, sizeof(job->arg), "%s", arg);
     start_job(job);
+}
+
+static void start_pair_refresh(void) {
+    ensure_pairing_server();
+    if (!gui_shell_wifi_connected()) {
+        g_pair_ip_ok = false;
+        g_pair_ip[0] = '\0';
+        show_info_toast("未联网");
+        home_menu();
+        rebuild_content();
+        return;
+    }
+    start_simple_job(JOB_PAIR_IP, NULL);
 }
 
 static void start_play_job(int start_index) {
@@ -257,22 +303,32 @@ static void start_play_job(int start_index) {
 static void home_menu(void) {
     clear_items();
     netease_client_poll_session_file();
+    ensure_pairing_server();
     if (netease_client_logged_in()) {
         char line[160];
         snprintf(line, sizeof(line), "账号 · %s", netease_client_nickname());
-        add_item(line, "点按退出登录");
+        add_item(line, NULL);
     } else {
-        add_item("未登录", "SD/ForTune/session.txt");
+        add_item("未登录", NULL);
+    }
+    {
+        char pair[96];
+        if (g_pair_ip_ok && g_pair_ip[0] && g_pair_pin[0])
+            snprintf(pair, sizeof(pair), "%s · PIN %s", g_pair_ip, g_pair_pin);
+        else if (g_pair_pin[0])
+            snprintf(pair, sizeof(pair), "PIN %s", g_pair_pin);
+        else
+            snprintf(pair, sizeof(pair), "—");
+        add_item("手机配对", pair);
     }
     add_item("每日推荐", NULL);
     add_item("我的歌单", NULL);
     add_item("我喜欢的音乐", NULL);
     add_item("正在播放", NULL);
     add_item("Wi-Fi", NULL);
-    add_item(gui_network_adb_active() ? "ADB · 开" : "ADB · 关", "调试推送/拉日志");
-    add_item(current_settings.db_logging_enabled ? "调试日志 · 开" : "调试日志 · 关",
-             "SD/.logs");
-    add_item("更新播放器", "SD/.compas 或在线");
+    add_item(gui_network_adb_active() ? "ADB · 开" : "ADB · 关", NULL);
+    add_item(current_settings.db_logging_enabled ? "调试日志 · 开" : "调试日志 · 关", NULL);
+    add_item("更新播放器", NULL);
     set_title("首页");
 }
 
@@ -327,17 +383,20 @@ static void on_row(int index) {
                 show_info_toast("已退出");
             } else {
                 netease_client_poll_session_file();
-                if (!netease_client_logged_in()) show_info_toast("无 session");
+                if (!netease_client_logged_in()) show_info_toast("用 MD 推送登录");
             }
             home_menu();
             rebuild_content();
             break;
-        case 1: start_simple_job(JOB_DAILY, NULL); break;
-        case 2: start_simple_job(JOB_PLAYLISTS, NULL); break;
-        case 3: start_simple_job(JOB_LIKED, NULL); break;
-        case 4: fortune_shell_open_player(); break;
-        case 5: fortune_shell_open_wifi_settings(); break;
-        case 6: {
+        case 1:
+            start_pair_refresh();
+            break;
+        case 2: start_simple_job(JOB_DAILY, NULL); break;
+        case 3: start_simple_job(JOB_PLAYLISTS, NULL); break;
+        case 4: start_simple_job(JOB_LIKED, NULL); break;
+        case 5: fortune_shell_open_player(); break;
+        case 6: fortune_shell_open_wifi_settings(); break;
+        case 7: {
             bool want_adb = !gui_network_adb_active();
             if (!start_usb_mode_switch(want_adb ? USB_MODE_ADB : USB_MODE_STORAGE)) {
                 show_info_toast("USB 忙");
@@ -350,14 +409,14 @@ static void on_row(int index) {
             rebuild_content();
             break;
         }
-        case 7:
+        case 8:
             current_settings.db_logging_enabled = !current_settings.db_logging_enabled;
             db_log_set_enabled(current_settings.db_logging_enabled);
             settings_save(&current_settings);
             home_menu();
             rebuild_content();
             break;
-        case 8:
+        case 9:
             gui_updates_open_player_menu();
             break;
         default: break;
@@ -486,21 +545,35 @@ void fortune_shell_init(void) {
     g_tab = TAB_HOME;
     g_busy = false;
     g_search_q[0] = '\0';
+    g_pair_ip[0] = '\0';
+    g_pair_pin[0] = '\0';
+    g_pair_ip_ok = false;
     clear_items();
+    ensure_pairing_server();
 }
 
 void fortune_shell_poll(void) {
     static uint32_t last;
+    static uint32_t last_pair;
     uint32_t now = lv_tick_get();
-    if (now - last < 2000) return;
-    last = now;
-    if (g_tab == TAB_HOME && g_item_kind == 0 && !g_busy) {
-        bool before = netease_client_logged_in();
-        netease_client_poll_session_file();
-        if (before != netease_client_logged_in()) {
-            home_menu();
-            rebuild_content();
+    if (now - last >= 2000) {
+        last = now;
+        if (g_tab == TAB_HOME && g_item_kind == 0 && !g_busy) {
+            bool before = netease_client_logged_in();
+            netease_client_poll_session_file();
+            if (before != netease_client_logged_in()) {
+                home_menu();
+                rebuild_content();
+            }
         }
+    }
+    /* Keep remote status server up for MD / web progress sync. */
+    if (gui_shell_wifi_connected() && !remote_control_is_running())
+        remote_control_start();
+    if (g_tab == TAB_HOME && g_item_kind == 0 && !g_busy && !g_pair_ip_ok &&
+        gui_shell_wifi_connected() && now - last_pair > 5000) {
+        last_pair = now;
+        start_pair_refresh();
     }
 }
 

@@ -15,9 +15,15 @@ Lean Compás-based player (`FORTUNE_SHELL=1`). v1: **NetEase Cloud Music** + **l
 4. 海贝首页 → **更新播放器** → **Install from SD card**
 
 本地仅语法检查：`make host FORTUNE_SHELL=1`（需 SDL2）；真机包以 CI 为准。
-## Login
+## Login / 手机配对（简化）
 
-Write `MUSIC_U=…` to `SD/ForTune/session.txt` (or `SD/NetEase/session.txt`). Imported once, then stored under `SD/.compas/fortune_netease.txt`.
+海贝首页 **手机配对**：显示 `IP · PIN xxxxxx`（点按刷新）。MusicDownloader 安卓：
+
+1. 设置里填 `http://<IP>:8899` 与同一 PIN  
+2. 「推送登录到播放器」→ 写入 `SD/NetEase/session.txt` **和** `SD/ForTune/session.txt`  
+3. 海贝首页应显示已登录  
+
+进度同步：沿用 Compás remote `/api/status`（网页/App 轮询位置）；配对只暴露 IP+PIN，不另造协议。
 
 ## ADB（必留）
 
