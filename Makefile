@@ -560,7 +560,13 @@ ifneq ($(UI_HITBOX_DEBUG),)
 UI_HITBOX_DEBUG_DEFINE = -DUI_HITBOX_DEBUG=1
 endif
 
-# Lean ForTune Hiby shell (三 Tab + 原生网易云 + 本地库). `make host FORTUNE_SHELL=1`
+# Lean ForTune Hiby shell (三 Tab + 原生网易云 + 本地库).
+# Enable with `FORTUNE_SHELL=1`, or by the marker file `.fortune-shell` on
+# fortune-* branches (so fork daily-build CI builds ForTune without a new
+# workflow YAML when the token lacks `workflow` scope).
+ifneq ($(wildcard .fortune-shell),)
+FORTUNE_SHELL ?= 1
+endif
 ifneq ($(FORTUNE_SHELL),)
 FORTUNE_SHELL_DEFINE = -DFORTUNE_SHELL=1
 endif

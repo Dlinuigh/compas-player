@@ -1,0 +1,2 @@
+# Present on fortune-* branches so CI `make target` enables FORTUNE_SHELL
+# without a separate workflow file (GitHub token may lack workflow scope).
