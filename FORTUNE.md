@@ -7,15 +7,14 @@ Lean Compás-based player (`FORTUNE_SHELL=1`). v1: **NetEase Cloud Music** + **l
 本机 macOS **不**交叉编译。仓库：[`Dlinuigh/compas-player`](https://github.com/Dlinuigh/compas-player)。
 
 1. 分支 `fortune-hiby`（含 `.fortune-shell` 标记，CI 的 `make target` 自动 `FORTUNE_SHELL=1`）
-2. Actions → **Daily executable build**（对该分支 `workflow_dispatch`）→ artifact `compas-executables-<board>`
-3. 设备开 ADB 后：
+2. Actions → **Daily executable build** 或 **ForTune Hiby build**（`fortune-hiby` **只编 r3ii_2025**）
+3. 下 artifact → 设备开 ADB：
    ```sh
    adb push compas_player_target_r3ii_2025 /data/mnt/sd_0/.compas/compas_player
    ```
 4. 海贝首页 → **更新播放器** → **Install from SD card**
 
-本地仅语法检查：`make host FORTUNE_SHELL=1`（需 SDL2）；真机包以 CI 为准。  
-另：`.github/workflows/fortune-build.yml` 仍在本地，需 `gh auth refresh -s workflow` 后才能推专用 workflow。
+本地仅语法检查：`make host FORTUNE_SHELL=1`（需 SDL2）；真机包以 CI 为准。
 ## Login
 
 Write `MUSIC_U=…` to `SD/ForTune/session.txt` (or `SD/NetEase/session.txt`). Imported once, then stored under `SD/.compas/fortune_netease.txt`.
